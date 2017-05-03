@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinPersistableTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinTableContainerSerDe;
+import org.apache.hadoop.hive.ql.exec.spark.BroadCastMap;
 import org.apache.hadoop.hive.ql.log.PerfLogger;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.BucketMapJoinContext;
@@ -113,10 +114,17 @@ public class SparkHashTableSinkOperator
       throw new HiveException(e);
     }
   }
+//
+//  protected void flushToFile(MapJoinPersistableTableContainer tableContainer,
+//      byte tag) throws Exception {
+//    MapredLocalWork localWork = getExecContext().getLocalWork();
+//        Path tmpURI = localWork.getTmpHDFSPath();
+//        BroadCastMap.getInstance().addSmallTables(tmpURI,tag,tableContainer);
+//    }
 
-  protected void flushToFile(MapJoinPersistableTableContainer tableContainer,
-      byte tag) throws Exception {
-    MapredLocalWork localWork = getExecContext().getLocalWork();
+    protected void flushToFile(MapJoinPersistableTableContainer tableContainer,
+                               byte tag) throws Exception {
+        MapredLocalWork localWork = getExecContext().getLocalWork();
     BucketMapJoinContext mapJoinCtx = localWork.getBucketMapjoinContext();
     Path inputPath = getExecContext().getCurrentInputPath();
     String bigInputPath = null;
@@ -188,6 +196,7 @@ public class SparkHashTableSinkOperator
     }
     tableContainer.clear();
   }
+
 
   /**
    * Implements the getName function for the Node Interface.

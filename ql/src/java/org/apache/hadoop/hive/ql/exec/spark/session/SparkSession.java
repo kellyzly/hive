@@ -75,4 +75,9 @@ public interface SparkSession {
    * Get an HDFS dir specific to the SparkSession
    * */
   Path getHDFSSessionDir() throws IOException;
+
+    /**
+     * broadcast variable by SparkContext#broadcast
+     */
+    public void broadcastVariable();
 }

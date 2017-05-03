@@ -201,7 +201,8 @@ class SparkClientImpl implements SparkClient {
     return isAlive && driverRpc.isActive();
   }
 
-  void cancel(String jobId) {
+
+    void cancel(String jobId) {
     protocol.cancel(jobId);
   }
 
@@ -403,7 +404,7 @@ class SparkClientImpl implements SparkClient {
       // long-running application.
       if ("kerberos".equals(hiveConf.get(HADOOP_SECURITY_AUTHENTICATION))) {
         String principal = SecurityUtil.getServerPrincipal(hiveConf.getVar(ConfVars.HIVE_SERVER2_KERBEROS_PRINCIPAL),
-            "0.0.0.0");
+                "0.0.0.0");
         String keyTabFile = hiveConf.getVar(ConfVars.HIVE_SERVER2_KERBEROS_KEYTAB);
         if (hiveConf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_ENABLE_DOAS)) {
           List<String> kinitArgv = Lists.newLinkedList();
@@ -725,6 +726,7 @@ class SparkClientImpl implements SparkClient {
     }
 
   }
+
 
   private static class GetExecutorCountJob implements Job<Integer> {
       private static final long serialVersionUID = 1L;

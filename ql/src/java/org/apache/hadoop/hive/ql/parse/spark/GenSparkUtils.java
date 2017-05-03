@@ -112,6 +112,7 @@ public class GenSparkUtils {
       ReduceSinkOperator reduceSink = (ReduceSinkOperator) parentOfRoot;
       maxExecutors = Math.max(maxExecutors, reduceSink.getConf().getNumReducers());
     }
+      LOG.debug("Adding reduce work (" + reduceWork.getName() + ") the parallelism"+ maxExecutors);
     reduceWork.setNumReduceTasks(maxExecutors);
 
     ReduceSinkOperator reduceSink = (ReduceSinkOperator) context.parentOfRoot;
