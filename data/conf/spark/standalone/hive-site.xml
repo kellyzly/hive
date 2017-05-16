@@ -240,4 +240,17 @@
   <description>Internal marker for test. Used for masking env-dependent values</description>
 </property>
 
+    <property>
+      <name>hive.spark.job.monitor.timeout</name>
+      <value>1200</value>
+  </property>
+  <property>
+      <name>hive.spark.client.server.connect.timeout</name>
+      <value>1200000</value>
+  </property>
+<property>
+      <name>hive.spark.client.connect.timeout</name>
+      <value>1200000</value>
+  </property>
+
 </configuration>
