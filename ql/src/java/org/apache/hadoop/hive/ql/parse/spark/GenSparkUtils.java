@@ -583,4 +583,35 @@ public class GenSparkUtils {
     }
     return null;
   }
+
+    public void combineSimilarPruningSinkSet(GenSparkProcContext procCtx, Operator<?> op) {
+        List<Operator<?>> roots = new ArrayList<Operator<?>>();
+        OperatorUtils.findRoots(op, roots);
+        if( roots.size() == 1 && roots.get(0) instanceof TableScanOperator){
+            TableScanOperator ts = (TableScanOperator)roots.get(0);
+             if( !procCtx.pruningTableScanMap.containsKey(ts.getName())) {
+               BaseWork mapWork = procCtx.rootToWorkMap.get(ts);
+               procCtx.pruningTableScanMap.put(ts.getName(), mapWork);
+             }else{
+               BaseWork mapWork1 = procCtx.pruningTableScanMap.get(ts.getName());
+               BaseWork mapWork2 = procCtx.rootToWorkMap.get(ts);
+               combineTwoMapWork(mapWork1,mapWork2);
+             }
+
+        }
+
+    }
+
+  //TODO
+
+  private void combineTwoMapWork(BaseWork mapWork1, BaseWork mapWork2) {
+    Set<Operator<?>> operatorSet1 = mapWork1.getAllOperators();
+    for(Operator op: operatorSet1){
+      LOG.debug("opertorSet1 op: ",op);
+    }
+    Set<Operator<?>> operatorSet2 = mapWork2.getAllOperators();
+    for(Operator op: operatorSet2){
+      LOG.debug("opertorSet2 op: ",op);
+    }
+  }
 }

@@ -144,6 +144,7 @@ public class GenSparkProcContext implements NodeProcessorCtx {
   // The set of TableScanOperators for pruning OP trees
   public final Set<Operator<?>> clonedPruningTableScanSet;
 
+  public final Map<String,BaseWork> pruningTableScanMap;
 
   @SuppressWarnings("unchecked")
   public GenSparkProcContext(HiveConf conf,
@@ -184,5 +185,6 @@ public class GenSparkProcContext implements NodeProcessorCtx {
     this.fileSinkMap = new LinkedHashMap<FileSinkOperator, List<FileSinkOperator>>();
     this.pruningSinkSet = new LinkedHashSet<Operator<?>>();
     this.clonedPruningTableScanSet = new LinkedHashSet<Operator<?>>();
+    this.pruningTableScanMap = new LinkedHashMap<String,BaseWork>();
   }
 }
