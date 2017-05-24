@@ -624,7 +624,13 @@ public class GenSparkUtils {
 
           } else {
               parentOp1.getChildOperators().add(op);
-            List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators());
+
+           // List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators().toArray(new Operator<?>[ parentOp1.getChildOperators().size()]));
+            //  List<Operator<?>> newChildrenOps =new ArrayList(parentOp1.getChildOperators());
+              ArrayList newChildrenOps = new ArrayList();
+              for (Object element : parentOp1.getChildOperators()) {
+                  newChildrenOps.add(element);
+              }
               parentOp1.setChildOperators(newChildrenOps);
           }
 
