@@ -595,7 +595,8 @@ public class GenSparkUtils {
              }else{
                BaseWork mapWork1 = procCtx.pruningTableScanMap.get(ts.getName());
                BaseWork mapWork2 = procCtx.rootToWorkMap.get(ts);
-               combineTwoMapWork(mapWork1,mapWork2);
+               combineTwoMapWork(mapWork1, mapWork2);
+               procCtx.removeWorkSet.add(mapWork2);
              }
 
         }
@@ -606,12 +607,34 @@ public class GenSparkUtils {
 
   private void combineTwoMapWork(BaseWork mapWork1, BaseWork mapWork2) {
     Set<Operator<?>> operatorSet1 = mapWork1.getAllOperators();
+    Map<String, Operator> operatorMap = new HashMap<String, Operator>();
     for(Operator op: operatorSet1){
+      operatorMap.put(op.getOperatorId(), op);
       LOG.debug("opertorSet1 op: ",op);
     }
     Set<Operator<?>> operatorSet2 = mapWork2.getAllOperators();
+//    Map<String, Operator> operatorMap2 = new HashMap<String, Operator>();
     for(Operator op: operatorSet2){
-      LOG.debug("opertorSet2 op: ",op);
+      List<Operator> parentOpList = op.getParentOperators();
+      for (Operator parentOp2 : parentOpList) {
+        if (operatorMap.containsKey(parentOp2.getOperatorId())) {
+          Operator parentOp1 = operatorMap.get(parentOp2.getOperatorId());
+          if (operatorMap.containsKey(op.getOperatorId())) {
+
+          } else {
+            parentOp1.getChildOperators().add(op);
+          }
+          op.setParentOperators(new ArrayList<Operator>(){{
+            add(parentOp1);
+          }});
+//          parentOp2 = parentOp1;
+        } else {
+          LOG.info("Operator " + parentOp2.getName() + "was not in the first operator map!");
+        }
+      }
+//      operatorMap2.put(op.getName(), op);
+//      LOG.debug("opertorSet2 op: ",op);
     }
+    LOG.info("AAAAAAAA");
   }
 }

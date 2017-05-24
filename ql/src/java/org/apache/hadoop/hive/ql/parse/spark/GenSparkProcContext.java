@@ -146,6 +146,8 @@ public class GenSparkProcContext implements NodeProcessorCtx {
 
   public final Map<String,BaseWork> pruningTableScanMap;
 
+  public final Set<BaseWork> removeWorkSet;
+
   @SuppressWarnings("unchecked")
   public GenSparkProcContext(HiveConf conf,
       ParseContext parseContext,
@@ -186,5 +188,6 @@ public class GenSparkProcContext implements NodeProcessorCtx {
     this.pruningSinkSet = new LinkedHashSet<Operator<?>>();
     this.clonedPruningTableScanSet = new LinkedHashSet<Operator<?>>();
     this.pruningTableScanMap = new LinkedHashMap<String,BaseWork>();
+    this.removeWorkSet = new LinkedHashSet<BaseWork>();
   }
 }

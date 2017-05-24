@@ -387,9 +387,15 @@ public class SparkCompiler extends TaskCompiler {
       utils.processPartitionPruningSink(procCtx, (SparkPartitionPruningSinkOperator) prunerSink);
     }
 
-//Combine the similar map tasks which contain partition pruning sinks
+    //Combine the similar map tasks which contain partition pruning sinks
     for (Operator<?> prunerSink : procCtx.pruningSinkSet) {
       utils.combineSimilarPruningSinkSet(procCtx, prunerSink);
+    }
+    for (Task rootTask : procCtx.rootTasks) {
+      SparkWork sparkWork = (SparkWork)rootTask.getWork();
+      for(BaseWork removeWork : procCtx.removeWorkSet) {
+        sparkWork.remove(removeWork);
+      }
     }
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_GENERATE_TASK_TREE);
