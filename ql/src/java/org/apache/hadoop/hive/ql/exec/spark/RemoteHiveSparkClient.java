@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -86,7 +87,7 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
   private transient List<URI> localJars = new ArrayList<URI>();
   private transient List<URI> localFiles = new ArrayList<URI>();
 
-  private final transient long sparkClientTimtout;
+    private final transient long sparkClientTimtout;
 
   RemoteHiveSparkClient(HiveConf hiveConf, Map<String, String> conf) throws Exception {
     this.hiveConf = hiveConf;
@@ -347,7 +348,7 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
 
       // Execute generated plan.
       JavaPairRDD<HiveKey, BytesWritable> finalRDD = plan.generateGraph();
-      // We use Spark RDD async action to submit job as it's the only way to get jobId now.
+        // We use Spark RDD async action to submit job as it's the only way to get jobId now.
       JavaFutureAction<Void> future = finalRDD.foreachAsync(HiveVoidFunction.getInstance());
       jc.monitor(future, sparkCounters, plan.getCachedRDDIds());
       return null;
@@ -363,4 +364,10 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
       }
     }
   }
+
+    @Override
+    public void broadcastVariable() {
+        JavaSparkContext sc = new JavaSparkContext(sparkConf);
+        BroadCastMap.getInstance().broadCastVariable(sc);
+    }
 }

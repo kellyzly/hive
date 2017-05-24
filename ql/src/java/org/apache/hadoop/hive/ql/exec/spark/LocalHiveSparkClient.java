@@ -79,7 +79,7 @@ public class LocalHiveSparkClient implements HiveSparkClient {
 
   private final List<String> localFiles = new ArrayList<String>();
 
-  private final JobMetricsListener jobMetricsListener;
+    private final JobMetricsListener jobMetricsListener;
 
   private LocalHiveSparkClient(SparkConf sparkConf) {
     sc = new JavaSparkContext(sparkConf);
@@ -218,4 +218,9 @@ public class LocalHiveSparkClient implements HiveSparkClient {
       sc.stop();
     }
   }
+
+    @Override
+    public void broadcastVariable() {
+      BroadCastMap.getInstance().broadCastVariable(sc);
+    }
 }

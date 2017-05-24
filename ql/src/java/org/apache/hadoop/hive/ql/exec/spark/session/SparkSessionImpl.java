@@ -71,6 +71,10 @@ public class SparkSessionImpl implements SparkSession {
     return hiveSparkClient.execute(driverContext, sparkWork);
   }
 
+    @Override
+    public void broadcastVariable(){
+        hiveSparkClient.broadcastVariable();}
+
   @Override
   public ObjectPair<Long, Integer> getMemoryAndCores() throws Exception {
     SparkConf sparkConf = hiveSparkClient.getSparkConf();
@@ -167,4 +171,8 @@ public class SparkSessionImpl implements SparkSession {
   public static String makeSessionId() {
     return UUID.randomUUID().toString();
   }
+
+    public HiveSparkClient getHiveSparkClient() {
+        return hiveSparkClient;
+    }
 }

@@ -26,23 +26,9 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.metrics.common.Metrics;
 import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
-import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
-import org.apache.hadoop.hive.ql.exec.MapredContext;
-import org.apache.hadoop.hive.ql.exec.mr.ExecMapperContext;
-import org.apache.hadoop.hive.ql.exec.persistence.MapJoinBytesTableContainer;
-import org.apache.hadoop.hive.ql.exec.persistence.MapJoinObjectSerDeContext;
-import org.apache.hadoop.hive.ql.optimizer.physical.SparkMapJoinResolver;
-import org.apache.hadoop.hive.ql.plan.MapredLocalWork;
-import org.apache.hadoop.hive.ql.plan.MapredWork;
-import org.apache.hadoop.hive.ql.plan.SparkBucketMapJoinContext;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
-import org.apache.hadoop.mapred.JobConf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -120,7 +106,6 @@ public class SparkTask extends Task<SparkWork> {
       sparkSession = SparkUtilities.getSparkSession(conf, sparkSessionManager);
 
       SparkWork sparkWork = getWork();
-        broadcastSmallTables(sparkWork);
       sparkWork.setRequiredCounterPrefix(getOperatorCounters());
 
       perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_SUBMIT_JOB);
@@ -146,8 +131,6 @@ public class SparkTask extends Task<SparkWork> {
           logSparkStatistic(sparkStatistics);
         }
         LOG.info("Execution completed successfully");
-        //  sparkSession.broadcastVariable();
-
       } else if (rc == 2) { // Cancel job if the monitor found job submission timeout.
         // TODO: If the timeout is because of lack of resources in the cluster, we should
         // ideally also cancel the app request here. But w/o facilities from Spark or YARN,
@@ -196,84 +179,7 @@ public class SparkTask extends Task<SparkWork> {
     return rc;
   }
 
-    private void broadcastSmallTables(SparkWork sparkWork) {
-
-        List<BaseWork> allBaseWorks  = sparkWork.getAllWork();
-        for( BaseWork baseWork: allBaseWorks) {
-            Set<Operator<?>> mapJoins = SparkMapJoinResolver.getOp(baseWork, MapJoinOperator.class);
-            if( mapJoins.size() >0){
-                for(Operator mapJoin: mapJoins) {
-                    MapredLocalWork mapredLocalWork = (MapredLocalWork) baseWork.getMapRedLocalWork();
-                    Path baseDir = mapredLocalWork.getTmpPath();
-                    if (baseDir != null) {
-                        console.printInfo("small table is in " + mapredLocalWork.getTmpPath());
-                         loadHashTable((MapJoinOperator)mapJoin);
-
-                    }
-                    break;
-                }
-            }
-
-        }
-
-    }
-//
-    private void loadHashTable(MapJoinOperator mapJoin){
-        JobConf jobConf = new JobConf(conf);
-
-        final ExecMapperContext mapContext = new ExecMapperContext(jobConf);
-        final MapredContext mrContext = MapredContext.get();
-        try {
-            mapJoin.initializeOpFromConf(conf);
-            mapJoin.loadHashTableToMemory(mapContext, mrContext);
-        } catch (HiveException e) {
-           console.printError("SparkTask.loadHashTable throws out err ",e.getLocalizedMessage());
-        }
-
-    }
-
-
-//    private void load(Path baseDir, MapredLocalWork localWork) {
-//        for (int pos = 0; pos < mapJoinTables.length; pos++) {
-//            if (pos == desc.getPosBigTable() || mapJoinTables[pos] != null) {
-//                continue;
-//            }
-//            if (useOptimizedContainer) {
-//                MapJoinObjectSerDeContext keyCtx = mapJoinTableSerdes[pos].getKeyContext();
-//                ObjectInspector keyOI = keyCtx.getSerDe().getObjectInspector();
-//                if (!MapJoinBytesTableContainer.isSupportedKey(keyOI)) {
-//                    if (firstContainer) {
-//                        LOG.warn("Not using optimized table container." +
-//                                "Only a subset of mapjoin keys is supported.");
-//                        useOptimizedContainer = false;
-//                        HiveConf.setBoolVar(hconf, HiveConf.ConfVars.HIVEMAPJOINUSEOPTIMIZEDTABLE, false);
-//                    } else {
-//                        throw new HiveException("Only a subset of mapjoin keys is supported.");
-//                    }
-//                }
-//            }
-//            firstContainer = false;
-//            String bigInputPath = currentInputPath;
-//            if (currentInputPath != null && mapJoinCtx != null) {
-//                if (!desc.isBucketMapJoin()) {
-//                    bigInputPath = null;
-//                } else {
-//                    Set<String> aliases =
-//                            ((SparkBucketMapJoinContext) mapJoinCtx).getPosToAliasMap().get(pos);
-//                    String alias = aliases.iterator().next();
-//                    // Any one small table input path
-//                    String smallInputPath =
-//                            mapJoinCtx.getAliasBucketFileNameMapping().get(alias).get(bigInputPath).get(0);
-//                    bigInputPath = mapJoinCtx.getMappingBigFile(alias, smallInputPath);
-//                }
-//            }
-//            String fileName = localWork.getBucketFileName(bigInputPath);
-//            Path path = Utilities.generatePath(baseDir, desc.getDumpFilePrefix(), (byte) pos, fileName);
-//            mapJoinTables[pos] = load(fs, path, mapJoinTableSerdes[pos]);
-//        }
-//    }
-
-    private void addToHistory(SparkJobRef jobRef) {
+  private void addToHistory(SparkJobRef jobRef) {
     console.printInfo("Starting Spark Job = " + jobRef.getJobId());
     if (SessionState.get() != null) {
       SessionState.get().getHiveHistory()

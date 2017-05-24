@@ -109,4 +109,5 @@ public interface SparkClient extends Serializable {
    * Check if remote context is still active.
    */
   boolean isActive();
+
 }

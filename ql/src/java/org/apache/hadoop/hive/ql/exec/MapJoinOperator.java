@@ -132,6 +132,9 @@ public class MapJoinOperator extends AbstractMapJoinOperator<MapJoinDesc> implem
     return HashTableLoaderFactory.getLoader(hconf);
   }
 
+    public void initializeOpFromConf(Configuration hconf) throws HiveException {
+       initializeOp(hconf);
+    }
   @Override
   protected void initializeOp(Configuration hconf) throws HiveException {
     this.hconf = hconf;
@@ -300,6 +303,25 @@ public class MapJoinOperator extends AbstractMapJoinOperator<MapJoinDesc> implem
       throw new HiveException(e);
     }
   }
+
+    public void loadHashTableToMemory(
+            ExecMapperContext mapContext, MapredContext mrContext) throws HiveException {
+        perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.LOAD_HASHTABLE);
+        loader.init(mapContext, mrContext, hconf, this);
+        try {
+            loader.load(mapJoinTables, mapJoinTableSerdes);
+        } catch (HiveException e) {
+            if (isLogInfoEnabled) {
+                LOG.info("Exception loading hash tables. Clearing partially loaded hash table containers.");
+            }
+
+            // there could be some spilled partitions which needs to be cleaned up
+            clearAllTableContainers();
+            throw e;
+        }
+        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.LOAD_HASHTABLE);
+    }
+
 
   protected Pair<MapJoinTableContainer[], MapJoinTableContainerSerDe[]> loadHashTable(
       ExecMapperContext mapContext, MapredContext mrContext) throws HiveException {

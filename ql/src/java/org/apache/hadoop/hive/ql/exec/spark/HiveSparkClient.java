@@ -51,4 +51,7 @@ public interface HiveSparkClient extends Serializable, Closeable {
    * @return  default parallelism.
    */
   int getDefaultParallelism() throws Exception;
+
+
+    void broadcastVariable();
 }

@@ -39,6 +39,7 @@ import org.apache.hadoop.hive.ql.exec.mr.ExecMapperContext;
 import org.apache.hadoop.hive.ql.exec.mr.MapredLocalTask;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinBytesTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinObjectSerDeContext;
+import org.apache.hadoop.hive.ql.exec.persistence.MapJoinPersistableTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinTableContainerSerDe;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -80,6 +81,21 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
           VectorMapJoinDesc.HashTableImplementationType.FAST;
     }
   }
+//    @Override
+//    public void load(MapJoinTableContainer[] mapJoinTables,
+//                     MapJoinTableContainerSerDe[] mapJoinTableSerdes)
+//            throws HiveException {
+//   MapredLocalWork localWork = context.getLocalWork();
+//        Path baseDir = localWork.getTmpPath();
+//        HashMap<Path,MapJoinPersistableTableContainersWrapper> mjpstcsWrapperMap= BroadCastMap.getInstance().getSmallTables();
+//        MapJoinPersistableTableContainersWrapper wrapper = mjpstcsWrapperMap.get(baseDir);
+//        for(Map.Entry<Byte,MapJoinPersistableTableContainer> keyValue: wrapper.getMpstcs().entrySet()){
+//            Byte tag = keyValue.getKey();
+//            MapJoinPersistableTableContainer mjpstc = keyValue.getValue();
+//            mapJoinTables[tag] = mjpstc;
+//        }
+//    }
+
 
   @Override
   public void load(MapJoinTableContainer[] mapJoinTables,
@@ -151,6 +167,8 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
       throw new HiveException(e);
     }
   }
+
+
 
   private MapJoinTableContainer load(FileSystem fs, Path path,
       MapJoinTableContainerSerDe mapJoinTableSerde) throws HiveException {
