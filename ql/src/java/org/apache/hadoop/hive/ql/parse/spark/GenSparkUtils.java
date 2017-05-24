@@ -623,7 +623,8 @@ public class GenSparkUtils {
           if (operatorMap.containsKey(op.getOperatorId())) {
 
           } else {
-            List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators().add(op));
+              parentOp1.getChildOperators().add(op);
+            List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators());
               parentOp1.setChildOperators(newChildrenOps);
           }
 
