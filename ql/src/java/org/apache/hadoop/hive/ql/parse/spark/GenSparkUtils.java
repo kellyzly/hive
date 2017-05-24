@@ -44,6 +44,7 @@ import org.apache.hadoop.hive.ql.exec.SMBMapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.SerializationUtilities;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.UnionOperator;
+import org.apache.hadoop.hive.ql.exec.Utilities;
 import org.apache.hadoop.hive.ql.exec.spark.SparkUtilities;
 import org.apache.hadoop.hive.ql.optimizer.GenMapRedUtils;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
@@ -622,11 +623,11 @@ public class GenSparkUtils {
           if (operatorMap.containsKey(op.getOperatorId())) {
 
           } else {
-            parentOp1.getChildOperators().add(op);
+            List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators().add(op));
+              parentOp1.setChildOperators(newChildrenOps);
           }
-          op.setParentOperators(new ArrayList<Operator>(){{
-            add(parentOp1);
-          }});
+
+          op.setParentOperators(Utilities.makeList(parentOp1));
 //          parentOp2 = parentOp1;
         } else {
           LOG.info("Operator " + parentOp2.getName() + "was not in the first operator map!");
