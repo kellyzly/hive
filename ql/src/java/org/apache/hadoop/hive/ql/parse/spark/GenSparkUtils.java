@@ -585,64 +585,52 @@ public class GenSparkUtils {
     return null;
   }
 
-    public void combineSimilarPruningSinkSet(GenSparkProcContext procCtx, Operator<?> op) {
-        List<Operator<?>> roots = new ArrayList<Operator<?>>();
-        OperatorUtils.findRoots(op, roots);
-        if( roots.size() == 1 && roots.get(0) instanceof TableScanOperator){
-            TableScanOperator ts = (TableScanOperator)roots.get(0);
-             if( !procCtx.pruningTableScanMap.containsKey(ts.getName())) {
-               BaseWork mapWork = procCtx.rootToWorkMap.get(ts);
-               procCtx.pruningTableScanMap.put(ts.getName(), mapWork);
-             }else{
-               BaseWork mapWork1 = procCtx.pruningTableScanMap.get(ts.getName());
-               BaseWork mapWork2 = procCtx.rootToWorkMap.get(ts);
-               combineTwoMapWork(mapWork1, mapWork2);
-               procCtx.removeWorkSet.add(mapWork2);
-             }
-
-        }
-
+  /**
+   * HIVE-11297: Combine those operator trees which start from the same table scan operator in dynamic partition pruning.
+   * @param op SparkPartitionPruningSinkOperator
+   */
+  public void combineSimilarPruningSinkSet(GenSparkProcContext procCtx, Operator<?> op) {
+    List<Operator<?>> roots = new ArrayList<Operator<?>>();
+    OperatorUtils.findRoots(op, roots);
+    if (roots.size() == 1 && roots.get(0) instanceof TableScanOperator) {
+      TableScanOperator ts = (TableScanOperator) roots.get(0);
+      if (!procCtx.pruningTableScanMap.containsKey(ts.getName())) {
+        BaseWork mapWork = procCtx.rootToWorkMap.get(ts);
+        procCtx.pruningTableScanMap.put(ts.getName(), mapWork);
+      } else {
+        BaseWork mapWork1 = procCtx.pruningTableScanMap.get(ts.getName());
+        BaseWork mapWork2 = procCtx.rootToWorkMap.get(ts);
+        combineTwoMapWork(mapWork1, mapWork2);
+        procCtx.removeWorkSet.add(mapWork2);
+      }
     }
-
-  //TODO
+  }
 
   private void combineTwoMapWork(BaseWork mapWork1, BaseWork mapWork2) {
     Set<Operator<?>> operatorSet1 = mapWork1.getAllOperators();
     Map<String, Operator> operatorMap = new HashMap<String, Operator>();
     for(Operator op: operatorSet1){
       operatorMap.put(op.getOperatorId(), op);
-      LOG.debug("opertorSet1 op: ",op);
     }
     Set<Operator<?>> operatorSet2 = mapWork2.getAllOperators();
-//    Map<String, Operator> operatorMap2 = new HashMap<String, Operator>();
     for(Operator op: operatorSet2){
       List<Operator> parentOpList = op.getParentOperators();
       for (Operator parentOp2 : parentOpList) {
-        if (operatorMap.containsKey(parentOp2.getOperatorId())) {
-          Operator parentOp1 = operatorMap.get(parentOp2.getOperatorId());
-          if (operatorMap.containsKey(op.getOperatorId())) {
-
-          } else {
-              parentOp1.getChildOperators().add(op);
-
-           // List<Operator<?>> newChildrenOps = Utilities.makeList(parentOp1.getChildOperators().toArray(new Operator<?>[ parentOp1.getChildOperators().size()]));
-            //  List<Operator<?>> newChildrenOps =new ArrayList(parentOp1.getChildOperators());
-              ArrayList newChildrenOps = new ArrayList();
-              for (Object element : parentOp1.getChildOperators()) {
-                  newChildrenOps.add(element);
-              }
-              parentOp1.setChildOperators(newChildrenOps);
-          }
-
-          op.setParentOperators(Utilities.makeList(parentOp1));
-//          parentOp2 = parentOp1;
+        if (!operatorMap.containsKey(parentOp2.getOperatorId())) {
+          LOG.error("Parent operator " + parentOp2.getName() + "was not in the first operator map!");
         } else {
-          LOG.info("Operator " + parentOp2.getName() + "was not in the first operator map!");
+          Operator parentOp1 = operatorMap.get(parentOp2.getOperatorId());
+          if (!operatorMap.containsKey(op.getOperatorId())) {
+            parentOp1.getChildOperators().add(op);
+            ArrayList newChildrenOps = new ArrayList();
+            for (Object element : parentOp1.getChildOperators()) {
+              newChildrenOps.add(element);
+            }
+            parentOp1.setChildOperators(newChildrenOps);
+          }
+          op.setParentOperators(Utilities.makeList(parentOp1));
         }
       }
-//      operatorMap2.put(op.getName(), op);
-//      LOG.debug("opertorSet2 op: ",op);
     }
-    LOG.info("AAAAAAAA");
   }
 }

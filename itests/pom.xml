@@ -100,7 +100,7 @@
 
                         rm -rf $BASE_DIR/$finalName
                         mkdir $BASE_DIR/$finalName
-                        cp -rf /home/zly/hos/spark-2.0.0-local/* $BASE_DIR/$finalName/
+                        cp -rf /home/hos/spark-2.0.0-local/* $BASE_DIR/$finalName/
                       }
                       mkdir -p $DOWNLOAD_DIR
                       download "http://d3jw87u4immizc.cloudfront.net/spark-tarball/spark-${spark.version}-bin-hadoop2-without-hive.tgz" "spark"
