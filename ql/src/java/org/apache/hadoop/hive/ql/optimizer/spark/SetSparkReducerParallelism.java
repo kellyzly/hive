@@ -18,10 +18,14 @@
 
 package org.apache.hadoop.hive.ql.optimizer.spark;
 
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.Stack;
 
+import org.apache.hadoop.hive.ql.exec.SelectOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.common.ObjectPair;
@@ -202,20 +206,99 @@ public class SetSparkReducerParallelism implements NodeProcessor {
     }
     if (desc.getNumReducers() == 1 && desc.hasOrderBy() &&
         hiveConf.getBoolVar(HiveConf.ConfVars.HIVESAMPLINGFORORDERBY) && !desc.isDeduplicated()) {
-      List<Operator<? extends OperatorDesc>> children = reduceSink.getChildOperators();
-      while (children != null && children.size() > 0) {
-        if (children.size() != 1 || children.get(0) instanceof LimitOperator) {
-          return false;
-        }
-        if (children.get(0) instanceof ReduceSinkOperator ||
-            children.get(0) instanceof FileSinkOperator) {
-          break;
-        }
-        children = children.get(0).getChildOperators();
-      }
-      return true;
+      Operator<?> jointOperator = getJoinOperator(reduceSink);
+      boolean isMultiInsert = jointOperator != null ? true : false;
+      boolean isOrderByLimit = isOrderByLimit(reduceSink, isMultiInsert, jointOperator);
+      return !isOrderByLimit;
     }
     return false;
+
+  }
+
+  /**
+   * Judge orderByLimit case:
+   * non multi-insert: If there is a Limit in the path which is from reduceSink to next RS/FS, return true otherwise false
+   * multi-insert: If there is a Limit in the path which is from reduceSink to joinOperator, return true otherwise false
+   *
+   * @param reduceSink
+   * @param isMultiInsert
+   * @param jointOperator
+   */
+  private boolean isOrderByLimit(ReduceSinkOperator reduceSink, boolean isMultiInsert, Operator<?> jointOperator) {
+    boolean isOrderByLimit = false;
+    Deque<Operator<?>> deque = new LinkedList<>();
+    if (reduceSink.getChildOperators() != null) {
+      deque.addAll(reduceSink.getChildOperators());
+    }
+    while (!deque.isEmpty()) {
+      Operator<?> operator = deque.pop();
+      if (!isMultiInsert && (operator instanceof ReduceSinkOperator || operator instanceof FileSinkOperator)) {
+        break;
+      }
+      if (isMultiInsert && operator.getOperatorId().equals(jointOperator.getOperatorId())) {
+        if (operator instanceof LimitOperator) {
+          isOrderByLimit = true;
+        }
+        break;
+      }
+      if (operator instanceof LimitOperator) {
+        isOrderByLimit = true;
+        break;
+      } else {
+        if (operator.getChildOperators() != null) {
+          deque.addAll(operator.getChildOperators());
+        }
+      }
+    }
+    LOG.debug("reduceSink:" + reduceSink + " isOrderByLimit:" + isOrderByLimit);
+    return isOrderByLimit;
+  }
+
+  // the multi insert case is like
+  // TS[0]-SEL[1]-RS[2]-SEL[3]-SEL[4]-FS[5]
+  //                          -SEL[6]-LIM[7]-RS[8]-SEL[9]-LIM[10]-FS[11]
+  // verify Multi Insert case: if there are more than 1 path from RS(RS[2]) to FS in the operator tree, it is a multi-insert
+  // case.
+  // if this is multi-insert case, return jointOperator(in above case, return SEL[3]) otherwise return null.
+  private Operator<?> getJoinOperator(ReduceSinkOperator rs) {
+    int pathToFSNum = 0;
+    Operator<?> jointOperator = null;
+    Stack<Operator<?>> childQueue = new Stack<>();
+    if (rs.getChildOperators() != null) {
+      childQueue.addAll(rs.getChildOperators());
+    }
+    List<Operator<?>> commonPath = new ArrayList<>();
+    while (!childQueue.isEmpty()) {
+      if (pathToFSNum > 1) {
+        // this is a multi insert case, we need not traverse the operator tree anymore
+        break;
+      }
+      Operator<?> child = childQueue.pop();
+      if (pathToFSNum < 1) {
+        commonPath.add(child);
+      } else if (!commonPath.contains(child) && pathToFSNum == 1) {
+        if (jointOperator == null) {
+          //this is a multi-insertCase, there are more than 1 paths from rs to the last FS
+          //the parent of child is the JointOperator
+          List<Operator<?>> parents = child.getParentOperators();
+          if (parents.size() > 1) {
+            LOG.error("Current operator is " + child + ", this is a multi insert case and there is only 1 parent of the child, but now the size of parents is " + parents.size());
+          } else {
+            jointOperator = parents.get(0);
+          }
+        }
+      }
+      if (child instanceof FileSinkOperator) {
+        pathToFSNum = pathToFSNum + 1;
+      } else {
+        if (child.getChildOperators() != null) {
+          childQueue.addAll(child.getChildOperators());
+        }
+      }
+    }
+    boolean isMultiInsert = pathToFSNum > 1 ? true : false;
+    LOG.debug("reducesink:" + rs + " isMultiInsert:" + isMultiInsert);
+    return jointOperator;
   }
 
   private void getSparkMemoryAndCores(OptimizeSparkProcContext context) throws SemanticException {
