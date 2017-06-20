@@ -42,6 +42,7 @@ import org.apache.hadoop.hive.ql.exec.OperatorUtils;
 import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
 import org.apache.hadoop.hive.ql.exec.SMBMapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.SerializationUtilities;
+//import org.apache.hadoop.hive.ql.exec.SparkSortReduceSinkOperator;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.UnionOperator;
 import org.apache.hadoop.hive.ql.exec.spark.SparkUtilities;
@@ -458,6 +459,9 @@ public class GenSparkUtils {
       }
     }
 
+    if (reduceSink.getSortLimit()) {
+      edgeProperty.setMRShuffle();
+    }
     // set to groupby-shuffle if it's still NONE
     // simple distribute-by goes here
     if (edgeProperty.isShuffleNone()) {

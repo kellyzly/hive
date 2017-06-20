@@ -541,6 +541,12 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
       LOG.debug("Initializing child " + id + " " + getName());
     }
     // Double the size of the array if needed
+    /*
+      SparkSortReduceSinkOperator#inputObjInspectors will null when SparkMapRecordHandler#initialize()
+     */
+//    if(inputObjInspectors == null){
+//      inputObjInspectors = new ObjectInspector[1];
+//    }
     if (parentId >= inputObjInspectors.length) {
       int newLength = inputObjInspectors.length * 2;
       while (parentId >= newLength) {

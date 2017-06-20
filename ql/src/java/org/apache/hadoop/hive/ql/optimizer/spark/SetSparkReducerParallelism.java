@@ -18,10 +18,14 @@
 
 package org.apache.hadoop.hive.ql.optimizer.spark;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.Stack;
 
+import org.apache.hadoop.hive.ql.exec.SelectOperator;
+//import org.apache.hadoop.hive.ql.exec.SparkSortReduceSinkOperator;
+import org.apache.hadoop.hive.ql.exec.TerminalOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.common.ObjectPair;
@@ -188,13 +192,81 @@ public class SetSparkReducerParallelism implements NodeProcessor {
         desc.setNumReducers(numReducers);
       }
     } else {
+      LimitOperator limit = getLimitAfterRS(sink);
+      if (limit != null) {
+        // RS-LIMIT -> SPARKSORTREDUCESINK-NEWLIMIT-RS-LIMIT
+       // SparkSortReduceSinkOperator sparkSortRS = new SparkSortReduceSinkOperator(sink);
+        ReduceSinkOperator sparkSortRS = new ReduceSinkOperator(sink.getCompilationOpContext());
+        sparkSortRS.setSortLimit(true);
+        ReduceSinkDesc sparkSortRSDesc = (ReduceSinkDesc)sink.getConf().clone();
+        sparkSortRS.setConf(sparkSortRSDesc);
+        sparkSortRS.getConf().setNumReducers(getNumReducersForSparkSortRS());
+        SelectOperator sel = (SelectOperator)limit.getParentOperators().get(0);
+        SelectOperator newSel = new SelectOperator(sparkSortRS.getCompilationOpContext());
+        newSel.setConf(sel.getConf());
+        LimitOperator newLimit = null;
+        newLimit = new LimitOperator(limit.getCompilationOpContext());
+        newLimit.setConf(limit.getConf());
+          sparkSortRS.setChildOperators(Utilities.makeList(newSel));
+          //remove sink from sink.getParentOperators,and add sparkSortRS as their child
+          Operator<?>[] newParent = new Operator[sink.getParentOperators().size()];
+          int i=0;
+          for (Operator<?> parent : sink.getParentOperators()) {
+            parent.replaceChild(sink, sparkSortRS);
+            newParent[i++] = parent;
+          }
+
+          sparkSortRS.setParentOperators(Utilities.makeList(newParent));
+          sparkSortRS.setChildOperators(Utilities.makeList(newSel));
+          // the parent of newSel is sparkSortRS
+          newSel.setParentOperators(Utilities.makeList(sparkSortRS));
+          // the child of newSel is newLimit
+          newSel.setChildOperators(Utilities.makeList(newLimit));
+          // the parent of newLimit is newSel
+          newLimit.setParentOperators(Utilities.makeList(newSel));
+          //the child of newLimit is RS
+          newLimit.setChildOperators(Utilities.makeList(sink));
+          sink.setParentOperators(Utilities.makeList(newLimit));
+
+      }
       LOG.info("Number of reducers for sink " + sink + " was already determined to be: " + desc.getNumReducers());
     }
 
     return false;
   }
 
-  // tests whether the RS needs automatic setting parallelism
+  private LimitOperator getLimitAfterRS(ReduceSinkOperator sink) {
+    ArrayList<Operator<?>> limitList = new ArrayList();
+    SparkUtilities.collectOp(limitList,sink,LimitOperator.class);
+    if( limitList.size()>0){
+      return (LimitOperator)limitList.get(0);
+    }else{
+      return null;
+    }
+//    LimitOperator res = null;
+//    Stack<Operator<?>> stack = new Stack();
+//    if (sink.getChildOperators() != null && sink.getChildOperators().size() > 0) {
+//      stack.addAll(sink.getChildOperators());
+//    }
+//    while (!stack.isEmpty()) {
+//      Operator p = stack.pop();
+//      if (p instanceof LimitOperator) {
+//        res = (LimitOperator) p;
+//        break;
+//      } else if (!(p instanceof TerminalOperator)) {
+//        if (p.getChildOperators() != null) {
+//          stack.addAll(p.getChildOperators());
+//        }
+//      }
+//    }
+//    return res;
+  }
+
+    private int getNumReducersForSparkSortRS() {
+      return 10;
+    }
+
+    // tests whether the RS needs automatic setting parallelism
   private boolean needSetParallelism(ReduceSinkOperator reduceSink, HiveConf hiveConf) {
     ReduceSinkDesc desc = reduceSink.getConf();
     if (desc.getNumReducers() <= 0) {
