@@ -62,6 +62,8 @@ import org.apache.hadoop.util.hash.MurmurHash;
 public class ReduceSinkOperator extends TerminalOperator<ReduceSinkDesc>
     implements Serializable, TopNHash.BinaryCollector {
 
+  private boolean sortLimit;
+
   /**
    * Counters.
    */
@@ -604,5 +606,14 @@ public class ReduceSinkOperator extends TerminalOperator<ReduceSinkDesc>
   @Override
   public void setOutputCollector(OutputCollector _out) {
     this.out = _out;
+  }
+
+
+  public boolean getSortLimit() {
+    return sortLimit;
+  }
+
+  public void setSortLimit(boolean sortLimit) {
+    this.sortLimit = sortLimit;
   }
 }

@@ -458,6 +458,9 @@ public class GenSparkUtils {
       }
     }
 
+    if (reduceSink.getSortLimit()) {
+      edgeProperty.setMRShuffle();
+    }
     // set to groupby-shuffle if it's still NONE
     // simple distribute-by goes here
     if (edgeProperty.isShuffleNone()) {
