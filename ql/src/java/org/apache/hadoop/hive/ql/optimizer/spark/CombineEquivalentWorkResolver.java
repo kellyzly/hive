@@ -30,6 +30,9 @@ import java.util.Stack;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.exec.OperatorUtils;
+import org.apache.hadoop.hive.ql.exec.spark.SparkUtilities;
+import org.apache.hadoop.hive.ql.parse.spark.SparkPartitionPruningSinkOperator;
 import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.PartitionDesc;
 import org.slf4j.Logger;
@@ -57,7 +60,7 @@ import org.apache.hadoop.hive.ql.plan.SparkWork;
  */
 public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
   protected static transient Logger LOG = LoggerFactory.getLogger(CombineEquivalentWorkResolver.class);
-
+  private List<String> removedMapWorkNames = new ArrayList<String>();
   @Override
   public PhysicalContext resolve(PhysicalContext pctx) throws SemanticException {
     List<Node> topNodes = new ArrayList<Node>();
@@ -83,6 +86,7 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
         SparkWork sparkWork = sparkTask.getWork();
         Set<BaseWork> roots = sparkWork.getRoots();
         compareWorksRecursively(roots, sparkWork);
+        removeDynamicPartitionPruningSinkBranch(removedMapWorkNames, sparkWork);
       }
       return null;
     }
@@ -171,6 +175,10 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
         }
       }
       sparkWork.remove(previous);
+      //In order to fix HIVE-16948
+      if (previous instanceof MapWork) {
+        removedMapWorkNames.add(previous.getName());
+      }
     }
 
     /*
@@ -312,6 +320,26 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
       OperatorComparatorFactory.OperatorComparator operatorComparator =
         OperatorComparatorFactory.getOperatorComparator(firstOperator.getClass());
       return operatorComparator.equals(firstOperator, secondOperator);
+    }
+
+    private void removeDynamicPartitionPruningSinkBranch(List<String> removedMapWorkName, SparkWork sparkWork) {
+      List<BaseWork> children = sparkWork.getAllWork();
+      for (BaseWork child : children) {
+        Set<Operator<?>> rootOperators = child.getAllRootOperators();
+        for (Operator root : rootOperators) {
+          List<Operator<?>> pruningList = new ArrayList<>();
+          SparkUtilities.collectOp(pruningList, root, SparkPartitionPruningSinkOperator.class);
+          for (Operator pruneSinkOp : pruningList) {
+            SparkPartitionPruningSinkOperator sparkPruneSinkOp = (SparkPartitionPruningSinkOperator) pruneSinkOp;
+            if (removedMapWorkName.contains(sparkPruneSinkOp.getConf().getTargetWork())) {
+              LOG.debug("ready to remove the sparkPruneSinkOp which target work is " +
+                  sparkPruneSinkOp.getConf().getTargetWork()+ " because the MapWork is equals to other map work and " +
+                  "has been deleted!");
+              OperatorUtils.removeBranch(pruneSinkOp);
+            }
+          }
+        }
+      }
     }
   }
 }
