@@ -324,6 +324,7 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
 
     private void removeDynamicPartitionPruningSinkBranch(List<String> removedMapWorkName, SparkWork sparkWork) {
       List<BaseWork> children = sparkWork.getAllWork();
+      List<BaseWork> removedMapWorkList = new ArrayList<BaseWork>();
       for (BaseWork child : children) {
         Set<Operator<?>> rootOperators = child.getAllRootOperators();
         for (Operator root : rootOperators) {
@@ -335,11 +336,37 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
               LOG.debug("ready to remove the sparkPruneSinkOp which target work is " +
                   sparkPruneSinkOp.getConf().getTargetWork()+ " because the MapWork is equals to other map work and " +
                   "has been deleted!");
-              OperatorUtils.removeBranch(pruneSinkOp);
+              boolean needRemoveWholeMapWork = false;
+              removePruneSinkSubTree(pruneSinkOp, needRemoveWholeMapWork);
+              if( needRemoveWholeMapWork ){
+                removedMapWorkList.add(child);
+              }
             }
           }
         }
       }
+
+      for(BaseWork mapWork: removedMapWorkList){
+        sparkWork.remove(mapWork);
+      }
+    }
+
+    //Remove sparkPruneSinkOp from the MapTask
+    //If the tree has branch, just remove the branch
+    //otherwise, remove the whole MapTask
+    private void removePruneSinkSubTree(Operator pruneSinkOp, boolean needRemoveWholeMapWork){
+     Operator<?> child = pruneSinkOp;
+      Operator<?> curr  = pruneSinkOp;
+      while(curr.getChildOperators().size()<=1){
+        if( curr.getParentOperators() == null || curr.getParentOperators().isEmpty()){
+          //has reached to the root of MapWork, need to remove the whole map work which contain pruning sink operator
+          needRemoveWholeMapWork = true;
+          return;
+        }
+        child = curr;
+        curr= curr.getParentOperators().get(0);
+      }
+      curr.removeChild(child);
     }
   }
 }
