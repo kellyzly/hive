@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.hive.ql.optimizer.spark;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -30,6 +31,10 @@ import java.util.Stack;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.exec.OperatorUtils;
+import org.apache.hadoop.hive.ql.exec.Task;
+import org.apache.hadoop.hive.ql.exec.spark.SparkUtilities;
+import org.apache.hadoop.hive.ql.parse.spark.SparkPartitionPruningSinkOperator;
 import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.PartitionDesc;
 import org.slf4j.Logger;
@@ -57,9 +62,11 @@ import org.apache.hadoop.hive.ql.plan.SparkWork;
  */
 public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
   protected static transient Logger LOG = LoggerFactory.getLogger(CombineEquivalentWorkResolver.class);
-
+  private List<String> removedMapWorkNames = new ArrayList<String>();
+  private PhysicalContext pctx;
   @Override
   public PhysicalContext resolve(PhysicalContext pctx) throws SemanticException {
+    this.pctx = pctx;
     List<Node> topNodes = new ArrayList<Node>();
     topNodes.addAll(pctx.getRootTasks());
     TaskGraphWalker taskWalker = new TaskGraphWalker(new EquivalentWorkMatcher());
@@ -83,6 +90,10 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
         SparkWork sparkWork = sparkTask.getWork();
         Set<BaseWork> roots = sparkWork.getRoots();
         compareWorksRecursively(roots, sparkWork);
+        removeDynamicPartitionPruningSink(removedMapWorkNames, sparkWork);
+        if (isEmptySparkWork(sparkWork)) {
+          removeEmptySparkTask(sparkTask);
+        }
       }
       return null;
     }
@@ -171,6 +182,10 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
         }
       }
       sparkWork.remove(previous);
+      // In order to fix HIVE-16948
+      if (previous instanceof MapWork) {
+        removedMapWorkNames.add(previous.getName());
+      }
     }
 
     /*
@@ -313,5 +328,71 @@ public class CombineEquivalentWorkResolver implements PhysicalPlanResolver {
         OperatorComparatorFactory.getOperatorComparator(firstOperator.getClass());
       return operatorComparator.equals(firstOperator, secondOperator);
     }
+
+    /**
+     * traverse the children in sparkWork to find the dpp sink operator which target work is included in
+     * removedMapWorkList
+     * If there is branch, remove prune sink operator branch in the BaseWork
+     * If there is no branch, remove the whole BaseWork
+     *
+     * @param removedMapWorkList: the name of the map work has been deleted because they are equals to other works.
+     * @param sparkWork:          current spark work
+     */
+    private void removeDynamicPartitionPruningSink(List<String> removedMapWorkList, SparkWork sparkWork) {
+      List<BaseWork> allWorks = sparkWork.getAllWork();
+      for (BaseWork baseWork : allWorks) {
+        Set<Operator<?>> rootOperators = baseWork.getAllRootOperators();
+        for (Operator root : rootOperators) {
+          List<Operator<?>> pruningList = new ArrayList<>();
+          SparkUtilities.collectOp(pruningList, root, SparkPartitionPruningSinkOperator.class);
+          for (Operator pruneSinkOp : pruningList) {
+            SparkPartitionPruningSinkOperator sparkPruneSinkOp = (SparkPartitionPruningSinkOperator) pruneSinkOp;
+            if (removedMapWorkList.contains(sparkPruneSinkOp.getConf().getTargetWork())) {
+              LOG.debug("ready to remove the sparkPruneSinkOp which target work is " +
+                  sparkPruneSinkOp.getConf().getTargetWork() + " because the MapWork is equals to other map work and " +
+                  "has been deleted!");
+              // If there is branch, remove prune sink operator branch in the baseWork
+              // If there is no branch, remove the whole baseWork
+              if (OperatorUtils.isInBranch(sparkPruneSinkOp)) {
+                OperatorUtils.removeBranch(sparkPruneSinkOp);
+              } else {
+                sparkWork.remove(baseWork);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    private boolean isEmptySparkWork(SparkWork sparkWork) {
+      List<BaseWork> allWorks = sparkWork.getAllWork();
+      boolean allWorksIsEmtpy = true;
+      for (BaseWork work : allWorks) {
+        if (work.getAllOperators().size() > 0) {
+          allWorksIsEmtpy = false;
+          break;
+        }
+      }
+      return allWorksIsEmtpy;
+    }
+  }
+
+  private void removeEmptySparkTask(SparkTask currTask) {
+    // modify the rootTasks of physicalContext
+    if (pctx.getRootTasks().contains(currTask)) {
+      List<Task<? extends Serializable>> newRoots = currTask.getChildTasks();
+      pctx.removeFromRootTask(currTask);
+      for (Task newRoot : newRoots) {
+        pctx.addToRootTask(newRoot);
+      }
+    }
+    //remove currTask from parentTasks
+    if (currTask.getParentTasks() != null && !currTask.getParentTasks().isEmpty()) {
+      for (Task parTask : currTask.getParentTasks()) {
+        parTask.removeDependentTask(currTask);
+      }
+    }
+    //remove currTask from childTasks
+    currTask.removeFromChildrenTasks();
   }
 }

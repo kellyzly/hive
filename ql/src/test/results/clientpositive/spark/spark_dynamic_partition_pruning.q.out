@@ -3701,20 +3701,6 @@ STAGE PLANS:
                           Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
                           target column name: ds
                           target work: Map 1
-                    Select Operator
-                      expressions: _col0 (type: string)
-                      outputColumnNames: _col0
-                      Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                      Group By Operator
-                        keys: _col0 (type: string)
-                        mode: hash
-                        outputColumnNames: _col0
-                        Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                        Spark Partition Pruning Sink Operator
-                          partition key expr: ds
-                          Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                          target column name: ds
-                          target work: Map 4
         Reducer 13 
             Reduce Operator Tree:
               Group By Operator
@@ -3744,20 +3730,6 @@ STAGE PLANS:
                           Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
                           target column name: ds
                           target work: Map 1
-                    Select Operator
-                      expressions: _col0 (type: string)
-                      outputColumnNames: _col0
-                      Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                      Group By Operator
-                        keys: _col0 (type: string)
-                        mode: hash
-                        outputColumnNames: _col0
-                        Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                        Spark Partition Pruning Sink Operator
-                          partition key expr: ds
-                          Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
-                          target column name: ds
-                          target work: Map 4
 
   Stage: Stage-1
     Spark
@@ -5548,6 +5520,20 @@ STAGE PLANS:
                     mode: hash
                     outputColumnNames: _col0
                     Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
+                    Select Operator
+                      expressions: _col0 (type: string)
+                      outputColumnNames: _col0
+                      Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
+                      Group By Operator
+                        keys: _col0 (type: string)
+                        mode: hash
+                        outputColumnNames: _col0
+                        Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
+                        Spark Partition Pruning Sink Operator
+                          partition key expr: ds
+                          Statistics: Num rows: 2 Data size: 368 Basic stats: COMPLETE Column stats: NONE
+                          target column name: ds
+                          target work: Map 4
                     Select Operator
                       expressions: _col0 (type: string)
                       outputColumnNames: _col0
