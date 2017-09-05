@@ -19,6 +19,7 @@
 package org.apache.hadoop.hive.ql.optimizer.spark;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -201,8 +202,11 @@ LOG.info("joinOp:"+joinOp);
         LOG.warn("Couldn't get statistics from: " + parentOp);
         return new long[]{-1, 0, 0};
       }
+      LOG.info("parentOp:"+parentOp);
       if( currInputStat.getDataSize() ==39150){
         LOG.info("table store data size 39150");
+      }else{
+        LOG.info("currInputStats.getDataSize():"+currInputStat.getDataSize());
       }
 
       // Union is hard to handle. For instance, the following case:
@@ -241,12 +245,16 @@ LOG.info("joinOp:"+joinOp);
         }
 
         if (inputSize > maxSize) {
+          LOG.debug("pos:"+pos);
+          LOG.debug("bigTableCandidateSet:"+Arrays.toString(bigTableCandidateSet.toArray()));
           if (!bigTableCandidateSet.contains(pos)) {
-            // can't use the current table as the big table, but it's too
-            // big for the map side.
-            LOG.info("can not use the current table as the big table, but it's too big for the map side, can not convert to map join");
+            LOG.debug("!bigTableCandidateSet.contains(pos)");
+                // can't use the current table as the big table, but it's too
+                // big for the map side.
+                LOG.info("can not use the current table as the big table, but it's too big for the map side, can not convert to map join");
             return new long[]{-1, 0, 0};
           }
+
 
           bigTableFound = true;
         }

@@ -153,8 +153,11 @@ public class SparkCompiler extends TaskCompiler {
     }
   }
 
-  private void runJoinOptimizations(OptimizeSparkProcContext procCtx) throws SemanticException {
+  private void (OptimizeSparkProcContext procCtx) throws SemanticException {
     ParseContext pCtx = procCtx.getParseContext();
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Before runJoinOptimizations:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
+    }
     Map<Rule, NodeProcessor> opRules = new LinkedHashMap<Rule, NodeProcessor>();
     opRules.put(new RuleRegExp("Set parallelism - ReduceSink",
             ReduceSinkOperator.getOperatorName() + "%"),
@@ -177,6 +180,10 @@ public class SparkCompiler extends TaskCompiler {
     ArrayList<Node> topNodes = new ArrayList<Node>();
     topNodes.addAll(pCtx.getTopOps().values());
     ogw.startWalking(topNodes, null);
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("After runJoinOptimizations:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
+    }
   }
 
   /**
