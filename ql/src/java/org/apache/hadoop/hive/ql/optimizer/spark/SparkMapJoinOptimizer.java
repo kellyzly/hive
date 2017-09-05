@@ -78,7 +78,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
       return null;
     }
 
-    LOG.info("Check if it can be converted to map join");
+    LOG.info("Check if joinOp"+joinOp+" can be converted to map join");
     long[] mapJoinInfo = getMapJoinConversionInfo(joinOp, context);
     int mapJoinConversionPos = (int) mapJoinInfo[0];
 
@@ -193,13 +193,16 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
     // bigTableFound means we've encountered a table that's bigger than the
     // max. This table is either the the big table or we cannot convert.
     boolean bigTableFound = false;
-
+LOG.info("joinOp:"+joinOp);
     for (Operator<? extends OperatorDesc> parentOp : joinOp.getParentOperators()) {
 
       Statistics currInputStat = parentOp.getStatistics();
       if (currInputStat == null) {
         LOG.warn("Couldn't get statistics from: " + parentOp);
         return new long[]{-1, 0, 0};
+      }
+      if( currInputStat.getDataSize() ==39150){
+        LOG.info("table store data size 39150");
       }
 
       // Union is hard to handle. For instance, the following case:
@@ -221,6 +224,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
       // for the branches above. Then, MJ will be in the following ReduceWork.
       // But, this is tricky to implement, and we'll leave it as a future work for now.
       if (containUnionWithoutRS(parentOp.getParentOperators().get(0))) {
+        LOG.info("containUnionWithoutRS, can not convert to map join");
         return new long[]{-1, 0, 0};
       }
 
@@ -232,6 +236,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
         if (bigTableFound) {
           // cannot convert to map join; we've already chosen a big table
           // on size and there's another one that's bigger.
+          LOG.info("bigTableFound, can not convert to map join");
           return new long[]{-1, 0, 0};
         }
 
@@ -239,6 +244,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
           if (!bigTableCandidateSet.contains(pos)) {
             // can't use the current table as the big table, but it's too
             // big for the map side.
+            LOG.info("can not use the current table as the big table, but it's too big for the map side, can not convert to map join");
             return new long[]{-1, 0, 0};
           }
 
@@ -254,6 +260,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
         if (totalSize > maxSize) {
           // sum of small tables size in this join exceeds configured limit
           // hence cannot convert.
+          LOG.info("sum of small tables size in this join exceeds configured limit, can not convert to map join");
           return new long[]{-1, 0, 0};
         }
 
@@ -265,6 +272,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
         totalSize += currInputStat.getDataSize();
         if (totalSize > maxSize) {
           // cannot hold all map tables in memory. Cannot convert.
+          LOG.info("cannot hold all map tables in memory. Cannot convert.");
           return new long[]{-1, 0, 0};
         }
       }
@@ -273,6 +281,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
 
     if (bigTablePosition == -1) {
       //No big table candidates.
+      LOG.info("No big candidates, Can not convert");
       return new long[]{-1, 0, 0};
     }
 
@@ -281,6 +290,7 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
     long connectedMapJoinSize = getConnectedMapJoinSize(joinOp.getParentOperators().
       get(bigTablePosition), joinOp, context);
     if ((connectedMapJoinSize + totalSize) > maxSize) {
+      LOG.info("Final check, find size of already-calculated Mapjoin Operators exceed the configured limit, Can not convert");
       return new long[]{-1, 0, 0};
     }
 
