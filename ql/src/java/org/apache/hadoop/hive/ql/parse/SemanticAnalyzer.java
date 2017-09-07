@@ -10893,9 +10893,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     }
 
     // 7. Perform Logical optimization
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Before logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
-    }
+    LOG.debug("Before logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
     Optimizer optm = new Optimizer();
     optm.setPctx(pCtx);
     optm.initialize(conf);
@@ -10905,9 +10903,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       setColumnAccessInfo(pCtx.getColumnAccessInfo());
     }
     FetchTask origFetchTask = pCtx.getFetchTask();
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("After logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
-    }
+    LOG.info("After logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
 
     // 8. Generate column access stats if required - wait until column pruning
     // takes place during optimization
