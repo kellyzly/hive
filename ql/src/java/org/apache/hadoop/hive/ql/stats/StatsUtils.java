@@ -348,16 +348,16 @@ public class StatsUtils {
       List<ColStatistics> colStats = Lists.newArrayList();
       if (fetchColStats) {
         colStats = getTableColumnStats(table, schema, neededColumns, colStatsCache);
-        if(colStats == null) {
+        if (colStats == null) {
           colStats = Lists.newArrayList();
         }
-        estimateStatsForMissingCols(neededColumns, colStats, table, conf, nr, schema);
-
-        // we should have stats for all columns (estimated or actual)
-        assert(neededColumns.size() == colStats.size());
-        long betterDS = getDataSizeFromColumnStats(nr, colStats);
-        ds = (betterDS < 1 || colStats.isEmpty()) ? ds : betterDS;
       }
+      estimateStatsForMissingCols(neededColumns, colStats, table, conf, nr, schema);
+      // we should have stats for all columns (estimated or actual)
+      assert (neededColumns.size() == colStats.size());
+      long betterDS = getDataSizeFromColumnStats(nr, colStats);
+      ds = (betterDS < 1 || colStats.isEmpty()) ? ds : betterDS;
+
       stats.setDataSize(ds);
       // infer if any column can be primary key based on column statistics
       inferAndSetPrimaryKey(stats.getNumRows(), colStats);
@@ -420,16 +420,22 @@ public class StatsUtils {
           stats.getBasicStatsState().equals(State.COMPLETE)) {
         stats.setBasicStatsState(State.PARTIAL);
       }
-      if (fetchColStats) {
-        List<String> partitionCols = getPartitionColumns(
-            schema, neededColumns, referencedColumns);
 
+      List<String> partitionCols = getPartitionColumns(
+          schema, neededColumns, referencedColumns);
+      AggrStats aggrStats = null;
+      List<String> partitionColsToRetrieve =new ArrayList<>(partitionCols.size());
+      List<ColStatistics> columnStats = new ArrayList<>();
+      List<String> neededColsToRetrieve = new ArrayList<String>(neededColumns.size());
+      // List of partitions
+      List<String> partNames = new ArrayList<String>(partList.getNotDeniedPartns().size());
+      for (Partition part : partList.getNotDeniedPartns()) {
+        partNames.add(part.getName());
+      }
+
+      if (fetchColStats) {
         // We will retrieve stats from the metastore only for columns that are not cached
-        List<String> neededColsToRetrieve;
-        List<String> partitionColsToRetrieve;
-        List<ColStatistics> columnStats = new ArrayList<>();
         if (colStatsCache != null) {
-          neededColsToRetrieve = new ArrayList<String>(neededColumns.size());
           for (String colName : neededColumns) {
             ColStatistics colStats = colStatsCache.getColStats().get(colName);
             if (colStats == null) {
@@ -446,7 +452,6 @@ public class StatsUtils {
               }
             }
           }
-          partitionColsToRetrieve = new ArrayList<>(partitionCols.size());
           for (String colName : partitionCols) {
             ColStatistics colStats = colStatsCache.getColStats().get(colName);
             if (colStats == null) {
@@ -468,13 +473,7 @@ public class StatsUtils {
           partitionColsToRetrieve = partitionCols;
         }
 
-        // List of partitions
-        List<String> partNames = new ArrayList<String>(partList.getNotDeniedPartns().size());
-        for (Partition part : partList.getNotDeniedPartns()) {
-          partNames.add(part.getName());
-        }
 
-        AggrStats aggrStats = null;
         // We check the sizes of neededColumns and partNames here. If either
         // size is 0, aggrStats is null after several retries. Thus, we can
         // skip the step to connect to the metastore.
@@ -482,66 +481,67 @@ public class StatsUtils {
           aggrStats = Hive.get().getAggrColStatsFor(table.getDbName(), table.getTableName(),
               neededColsToRetrieve, partNames);
         }
+      }
 
-        boolean statsRetrieved = aggrStats != null &&
-            aggrStats.getColStats() != null && aggrStats.getColStatsSize() != 0;
-        if (neededColumns.size() == 0 ||
-            (neededColsToRetrieve.size() > 0 && !statsRetrieved)) {
-          estimateStatsForMissingCols(neededColsToRetrieve, columnStats, table, conf, nr, schema);
-          // There are some partitions with no state (or we didn't fetch any state).
-          // Update the stats with empty list to reflect that in the
-          // state/initialize structures.
+      boolean statsRetrieved = aggrStats != null &&
+          aggrStats.getColStats() != null && aggrStats.getColStatsSize() != 0;
+      if (neededColumns.size() == 0 ||
+          (neededColsToRetrieve.size() > 0 && !statsRetrieved)) {
+        estimateStatsForMissingCols(neededColsToRetrieve, columnStats, table, conf, nr, schema);
+        // There are some partitions with no state (or we didn't fetch any state).
+        // Update the stats with empty list to reflect that in the
+        // state/initialize structures.
 
-          // add partition column stats
-          addPartitionColumnStats(conf, partitionColsToRetrieve, schema, table, partList, columnStats);
+        // add partition column stats
+        addPartitionColumnStats(conf, partitionColsToRetrieve, schema, table, partList, columnStats);
 
-          stats.addToDataSize(getDataSizeFromColumnStats(nr, columnStats));
-          stats.updateColumnStatsState(deriveStatType(columnStats, referencedColumns));
+        stats.addToDataSize(getDataSizeFromColumnStats(nr, columnStats));
+        stats.updateColumnStatsState(deriveStatType(columnStats, referencedColumns));
 
-          stats.addToColumnStats(columnStats);
-        } else {
-          if (statsRetrieved) {
-            columnStats.addAll(convertColStats(aggrStats.getColStats(), table.getTableName()));
-          }
-          int colStatsAvailable = neededColumns.size() + partitionCols.size() - partitionColsToRetrieve.size();
-          if (columnStats.size() != colStatsAvailable) {
-            LOG.debug("Column stats requested for : {} columns. Able to retrieve for {} columns",
-                    columnStats.size(), colStatsAvailable);
-          }
-
-          addPartitionColumnStats(conf, partitionColsToRetrieve, schema, table, partList, columnStats);
-          long betterDS = getDataSizeFromColumnStats(nr, columnStats);
-          stats.setDataSize((betterDS < 1 || columnStats.isEmpty()) ? ds : betterDS);
-          // infer if any column can be primary key based on column statistics
-          inferAndSetPrimaryKey(stats.getNumRows(), columnStats);
-
-          stats.addToColumnStats(columnStats);
-
-          // Infer column stats state
-          stats.setColumnStatsState(deriveStatType(columnStats, referencedColumns));
-          if (neededColumns.size() != neededColsToRetrieve.size() ||
-              partitionCols.size() != partitionColsToRetrieve.size()) {
-            // Include state for cached columns
-            stats.updateColumnStatsState(colStatsCache.getState());
-          }
-          // Change if we could not retrieve for all partitions
-          if (aggrStats != null && aggrStats.getPartsFound() != partNames.size() && stats.getColumnStatsState() != State.NONE) {
-            stats.updateColumnStatsState(State.PARTIAL);
-            LOG.debug("Column stats requested for : {} partitions. Able to retrieve for {} partitions",
-                    partNames.size(), aggrStats.getPartsFound());
-          }
+        stats.addToColumnStats(columnStats);
+      } else {
+        if (statsRetrieved) {
+          columnStats.addAll(convertColStats(aggrStats.getColStats(), table.getTableName()));
+        }
+        int colStatsAvailable = neededColumns.size() + partitionCols.size() - partitionColsToRetrieve.size();
+        if (columnStats.size() != colStatsAvailable) {
+          LOG.debug("Column stats requested for : {} columns. Able to retrieve for {} columns",
+              columnStats.size(), colStatsAvailable);
         }
 
-        // This block exists for debugging purposes: we want to check whether
-        // the col stats cache is working properly and we are retrieving the
-        // stats from metastore only once.
-        if (colStatsCache != null && failIfCacheMiss &&
-            stats.getColumnStatsState().equals(State.COMPLETE) &&
-            (!neededColsToRetrieve.isEmpty() || !partitionColsToRetrieve.isEmpty())) {
-          throw new HiveException("Cache has been loaded in logical planning phase for all columns; "
-              + "however, stats for column some columns could not be retrieved from it "
-              + "(see messages above)");
+        addPartitionColumnStats(conf, partitionColsToRetrieve, schema, table, partList, columnStats);
+        long betterDS = getDataSizeFromColumnStats(nr, columnStats);
+        stats.setDataSize((betterDS < 1 || columnStats.isEmpty()) ? ds : betterDS);
+        // infer if any column can be primary key based on column statistics
+        inferAndSetPrimaryKey(stats.getNumRows(), columnStats);
+
+        stats.addToColumnStats(columnStats);
+
+        // Infer column stats state
+        stats.setColumnStatsState(deriveStatType(columnStats, referencedColumns));
+        if (neededColumns.size() != neededColsToRetrieve.size() ||
+            partitionCols.size() != partitionColsToRetrieve.size()) {
+          // Include state for cached columns
+          stats.updateColumnStatsState(colStatsCache.getState());
         }
+        // Change if we could not retrieve for all partitions
+        if (aggrStats != null && aggrStats.getPartsFound() != partNames.size() && stats.getColumnStatsState() != State.NONE) {
+          stats.updateColumnStatsState(State.PARTIAL);
+          LOG.debug("Column stats requested for : {} partitions. Able to retrieve for {} partitions",
+              partNames.size(), aggrStats.getPartsFound());
+        }
+      }
+
+      // This block exists for debugging purposes: we want to check whether
+      // the col stats cache is working properly and we are retrieving the
+      // stats from metastore only once.
+      if (colStatsCache != null && failIfCacheMiss &&
+          stats.getColumnStatsState().equals(State.COMPLETE) &&
+          (!neededColsToRetrieve.isEmpty() || !partitionColsToRetrieve.isEmpty())) {
+        throw new HiveException("Cache has been loaded in logical planning phase for all columns; "
+            + "however, stats for column some columns could not be retrieved from it "
+            + "(see messages above)");
+
       }
     }
     return stats;
