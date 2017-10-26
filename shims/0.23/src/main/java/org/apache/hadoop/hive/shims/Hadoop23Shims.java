@@ -1128,10 +1128,11 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
   @Override
   public boolean runDistCp(List<Path> srcPaths, Path dst, Configuration conf) throws IOException {
-    DistCpOptions options = new DistCpOptions(srcPaths, dst);
-    options.setSyncFolder(true);
-    options.setSkipCRC(true);
-    options.preserve(FileAttribute.BLOCKSIZE);
+       DistCpOptions options = new DistCpOptions.Builder(srcPaths, dst)
+        .withSyncFolder(true)
+        .withCRC(true)
+        .preserve(FileAttribute.BLOCKSIZE)
+        .build();
 
     // Creates the command-line parameters for distcp
     List<String> params = constructDistCpParams(srcPaths, dst, conf);
@@ -1207,18 +1208,24 @@ public class Hadoop23Shims extends HadoopShimsSecure {
       if(!"hdfs".equalsIgnoreCase(path.toUri().getScheme())) {
         return false;
       }
-      try {
-        return (hdfsAdmin.getEncryptionZoneForPath(fullPath) != null);
-      } catch (FileNotFoundException fnfe) {
-        LOG.debug("Failed to get EZ for non-existent path: "+ fullPath, fnfe);
-        return false;
-      }
+
+      return (getEncryptionZoneForPath(fullPath) != null);
+    }
+
+    private EncryptionZone getEncryptionZoneForPath(Path path) throws IOException {
+      if (FileSystem.get(conf).exists(path)) {
+        return hdfsAdmin.getEncryptionZoneForPath(path);
+      } else if (!path.getParent().equals(path)) {
+        return getEncryptionZoneForPath(path.getParent());
+      } else {
+        return null;
+       }
     }
 
     @Override
     public boolean arePathsOnSameEncryptionZone(Path path1, Path path2) throws IOException {
-      return equivalentEncryptionZones(hdfsAdmin.getEncryptionZoneForPath(path1),
-                                       hdfsAdmin.getEncryptionZoneForPath(path2));
+      return equivalentEncryptionZones(getEncryptionZoneForPath(path1),
+                                       getEncryptionZoneForPath(path2));
     }
 
     private boolean equivalentEncryptionZones(EncryptionZone zone1, EncryptionZone zone2) {
@@ -1256,8 +1263,8 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     public int comparePathKeyStrength(Path path1, Path path2) throws IOException {
       EncryptionZone zone1, zone2;
 
-      zone1 = hdfsAdmin.getEncryptionZoneForPath(path1);
-      zone2 = hdfsAdmin.getEncryptionZoneForPath(path2);
+      zone1 = getEncryptionZoneForPath(path1);
+      zone2 = getEncryptionZoneForPath(path2);
 
       if (zone1 == null && zone2 == null) {
         return 0;
