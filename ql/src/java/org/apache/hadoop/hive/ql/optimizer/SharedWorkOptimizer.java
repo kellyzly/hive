@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.exec.AppMasterEventOperator;
 import org.apache.hadoop.hive.ql.exec.DummyStoreOperator;
 import org.apache.hadoop.hive.ql.exec.FilterOperator;
@@ -48,6 +49,7 @@ import org.apache.hadoop.hive.ql.exec.RowSchema;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.exec.UnionOperator;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
 import org.apache.hadoop.hive.ql.parse.GenTezUtils;
 import org.apache.hadoop.hive.ql.parse.ParseContext;
 import org.apache.hadoop.hive.ql.parse.PrunedPartitionList;
@@ -262,13 +264,26 @@ public class SharedWorkOptimizer extends Transform {
                 GenTezUtils.removeSemiJoinOperator(
                         pctx, (ReduceSinkOperator) op, sjbi.getTsOp());
               }
-            } else if (op instanceof AppMasterEventOperator) {
-              DynamicPruningEventDesc dped = (DynamicPruningEventDesc) op.getConf();
-              if (!sr.discardableOps.contains(dped.getTableScan()) &&
-                      !sr.discardableInputOps.contains(dped.getTableScan())) {
-                GenTezUtils.removeSemiJoinOperator(
-                        pctx, (AppMasterEventOperator) op, dped.getTableScan());
+            } else if (op.getConf() instanceof DynamicPruningEventDesc || op.getConf() instanceof SparkPartitionPruningSinkDesc) {
+              if (HiveConf.getVar(pctx.getConf(),
+                  HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+                DynamicPruningEventDesc dped =(DynamicPruningEventDesc) op.getConf();
+                if (!sr.discardableOps.contains(dped.getTableScan()) &&
+                    !sr.discardableInputOps.contains(dped.getTableScan())) {
+                  GenTezUtils.removeSemiJoinOperator(
+                      pctx, (AppMasterEventOperator) op, dped.getTableScan());
+                }
+              }else if(HiveConf.getVar(pctx.getConf(),
+                  HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("spark")){
+                SparkPartitionPruningSinkDesc dped = (SparkPartitionPruningSinkDesc)op.getConf();
+                if (!sr.discardableOps.contains(dped.getTableScan()) &&
+                    !sr.discardableInputOps.contains(dped.getTableScan())) {
+                  // current in Hive on Spark,there is no similar feature like "hive.tez.dynamic.semijoin.reduction(HIVE-16862)
+                  /*GenTezUtils.removeSemiJoinOperator(
+                      pctx, (AppMasterEventOperator) op, dped.getTableScan());*/
+                }
               }
+
             }
             LOG.debug("Input operator removed: {}", op);
           }
@@ -360,7 +375,7 @@ public class SharedWorkOptimizer extends Transform {
     LOG.debug("DPP information stored in the cache: {}", optimizerCache.tableScanToDPPSource);
   }
 
-  private static Multimap<String, TableScanOperator> splitTableScanOpsByTable(
+  public static Multimap<String, TableScanOperator> splitTableScanOpsByTable(
           ParseContext pctx) {
     Multimap<String, TableScanOperator> tableNameToOps = ArrayListMultimap.create();
     // Sort by operator ID so we get deterministic results
@@ -374,7 +389,7 @@ public class SharedWorkOptimizer extends Transform {
     return tableNameToOps;
   }
 
-  private static List<Entry<String, Long>> rankTablesByAccumulatedSize(ParseContext pctx) {
+  public static List<Entry<String, Long>> rankTablesByAccumulatedSize(ParseContext pctx) {
     Map<String, Long> tableToTotalSize = new HashMap<>();
     for (Entry<String, TableScanOperator> e : pctx.getTopOps().entrySet()) {
       TableScanOperator tsOp = e.getValue();
@@ -401,7 +416,7 @@ public class SharedWorkOptimizer extends Transform {
     return sortedTables;
   }
 
-  private static boolean areMergeable(ParseContext pctx, SharedWorkOptimizerCache optimizerCache,
+  public static boolean areMergeable(ParseContext pctx, SharedWorkOptimizerCache optimizerCache,
           TableScanOperator tsOp1, TableScanOperator tsOp2) throws SemanticException {
     // First we check if the two table scan operators can actually be merged
     // If schemas do not match, we currently do not merge
@@ -485,10 +500,11 @@ public class SharedWorkOptimizer extends Transform {
     return true;
   }
 
-  private static SharedResult extractSharedOptimizationInfo(ParseContext pctx,
+  public static SharedResult extractSharedOptimizationInfo(ParseContext pctx,
           SharedWorkOptimizerCache optimizerCache,
           TableScanOperator retainableTsOp,
           TableScanOperator discardableTsOp) throws SemanticException {
+    long noconditionalTaskSize = pctx.getConf().getLongVar(HiveConf.ConfVars.HIVECONVERTJOINNOCONDITIONALTASKTHRESHOLD);
     Set<Operator<?>> retainableOps = new LinkedHashSet<>();
     Set<Operator<?>> discardableOps = new LinkedHashSet<>();
     Set<Operator<?>> discardableInputOps = new HashSet<>();
@@ -593,7 +609,14 @@ public class SharedWorkOptimizer extends Transform {
       if (equalOp1 instanceof MapJoinOperator) {
         MapJoinOperator mop = (MapJoinOperator) equalOp1;
         dataSize = StatsUtils.safeAdd(dataSize, mop.getConf().getInMemoryDataSize());
-        maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+        //for tez
+        if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+          maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+
+        } else if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("spark")) {
+          // for spark
+          maxDataSize = noconditionalTaskSize;
+        }
       }
       if (currentOp1.getChildOperators().size() > 1 ||
               currentOp2.getChildOperators().size() > 1) {
@@ -611,7 +634,14 @@ public class SharedWorkOptimizer extends Transform {
       if (op instanceof MapJoinOperator && !retainableOps.contains(op)) {
         MapJoinOperator mop = (MapJoinOperator) op;
         dataSize = StatsUtils.safeAdd(dataSize, mop.getConf().getInMemoryDataSize());
-        maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+        //for tez
+        if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+          maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+
+        } else if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("spark")) {
+          // for spark
+          maxDataSize = noconditionalTaskSize;
+        }
       }
     }
     Set<Operator<?>> opsWork2 = findWorkOperators(optimizerCache, currentOp2);
@@ -619,7 +649,13 @@ public class SharedWorkOptimizer extends Transform {
       if (op instanceof MapJoinOperator && !discardableOps.contains(op)) {
         MapJoinOperator mop = (MapJoinOperator) op;
         dataSize = StatsUtils.safeAdd(dataSize, mop.getConf().getInMemoryDataSize());
-        maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+        //for tez
+        if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+          maxDataSize = mop.getConf().getMemoryMonitorInfo().getAdjustedNoConditionalTaskSize();
+        } else if (HiveConf.getVar(pctx.getConf(), HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("spark")) {
+          // for spark
+          maxDataSize = noconditionalTaskSize;
+        }
       }
     }
 
@@ -796,7 +832,7 @@ public class SharedWorkOptimizer extends Transform {
     return op1.logicalEquals(op2);
   }
 
-  private static boolean validPreConditions(ParseContext pctx, SharedWorkOptimizerCache optimizerCache,
+  public static boolean validPreConditions(ParseContext pctx, SharedWorkOptimizerCache optimizerCache,
           SharedResult sr) {
 
     // We check whether merging the works would cause the size of
@@ -1011,11 +1047,20 @@ public class SharedWorkOptimizer extends Transform {
           if (sjbi != null) {
             set.addAll(findWorkOperators(optimizerCache, sjbi.getTsOp()));
           }
-        } else if(op.getConf() instanceof DynamicPruningEventDesc) {
+        } else if(op.getConf() instanceof DynamicPruningEventDesc  || op.getConf() instanceof SparkPartitionPruningSinkDesc) {
           // DPP work is considered a descendant because work needs
           // to finish for it to execute
-          set.addAll(findWorkOperators(
-                  optimizerCache, ((DynamicPruningEventDesc) op.getConf()).getTableScan()));
+          if (HiveConf.getVar(pctx.getConf(),
+              HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+            //for tez
+            set.addAll(findWorkOperators(
+                optimizerCache, ((DynamicPruningEventDesc) op.getConf()).getTableScan()));
+          }else if (HiveConf.getVar(pctx.getConf(),
+              HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("spark")) {
+            //for spark
+            set.addAll(findWorkOperators(
+                optimizerCache, ((SparkPartitionPruningSinkDesc) op.getConf()).getTableScan()));
+          }
         }
       }
       workOps = set;
@@ -1063,7 +1108,7 @@ public class SharedWorkOptimizer extends Transform {
     return found;
   }
 
-  private static void pushFilterToTopOfTableScan(
+  public static void pushFilterToTopOfTableScan(
           SharedWorkOptimizerCache optimizerCache, TableScanOperator tsOp)
                   throws UDFArgumentException {
     ExprNodeGenericFuncDesc tableScanExprNode = tsOp.getConf().getFilterExpr();
@@ -1103,75 +1148,4 @@ public class SharedWorkOptimizer extends Transform {
       }
     }
   }
-
-  private static class SharedResult {
-    final List<Operator<?>> retainableOps;
-    final List<Operator<?>> discardableOps;
-    final Set<Operator<?>> discardableInputOps;
-    final long dataSize;
-    final long maxDataSize;
-
-    private SharedResult(Collection<Operator<?>> retainableOps, Collection<Operator<?>> discardableOps,
-            Set<Operator<?>> discardableInputOps, long dataSize, long maxDataSize) {
-      this.retainableOps = ImmutableList.copyOf(retainableOps);
-      this.discardableOps = ImmutableList.copyOf(discardableOps);
-      this.discardableInputOps = ImmutableSet.copyOf(discardableInputOps);
-      this.dataSize = dataSize;
-      this.maxDataSize = maxDataSize;
-    }
-  }
-
-  /** Cache to accelerate optimization */
-  private static class SharedWorkOptimizerCache {
-    // Operators that belong to each work
-    final HashMultimap<Operator<?>, Operator<?>> operatorToWorkOperators =
-            HashMultimap.<Operator<?>, Operator<?>>create();
-    // Table scan operators to DPP sources
-    final Multimap<TableScanOperator, Operator<?>> tableScanToDPPSource =
-            HashMultimap.<TableScanOperator, Operator<?>>create();
-
-    // Add new operator to cache work group of existing operator (if group exists)
-    void putIfWorkExists(Operator<?> opToAdd, Operator<?> existingOp) {
-      List<Operator<?>> c = ImmutableList.copyOf(operatorToWorkOperators.get(existingOp));
-      if (!c.isEmpty()) {
-        for (Operator<?> op : c) {
-          operatorToWorkOperators.get(op).add(opToAdd);
-        }
-        operatorToWorkOperators.putAll(opToAdd, c);
-        operatorToWorkOperators.put(opToAdd, opToAdd);
-      }
-    }
-
-    // Remove operator
-    void removeOp(Operator<?> opToRemove) {
-      Set<Operator<?>> s = operatorToWorkOperators.get(opToRemove);
-      s.remove(opToRemove);
-      List<Operator<?>> c1 = ImmutableList.copyOf(s);
-      if (!c1.isEmpty()) {
-        for (Operator<?> op1 : c1) {
-          operatorToWorkOperators.remove(op1, opToRemove); // Remove operator
-        }
-        operatorToWorkOperators.removeAll(opToRemove); // Remove entry for operator
-      }
-    }
-
-    // Remove operator and combine
-    void removeOpAndCombineWork(Operator<?> opToRemove, Operator<?> replacementOp) {
-      Set<Operator<?>> s = operatorToWorkOperators.get(opToRemove);
-      s.remove(opToRemove);
-      List<Operator<?>> c1 = ImmutableList.copyOf(s);
-      List<Operator<?>> c2 = ImmutableList.copyOf(operatorToWorkOperators.get(replacementOp));
-      if (!c1.isEmpty() && !c2.isEmpty()) {
-        for (Operator<?> op1 : c1) {
-          operatorToWorkOperators.remove(op1, opToRemove); // Remove operator
-          operatorToWorkOperators.putAll(op1, c2); // Add ops of new collection
-        }
-        operatorToWorkOperators.removeAll(opToRemove); // Remove entry for operator
-        for (Operator<?> op2 : c2) {
-          operatorToWorkOperators.putAll(op2, c1); // Add ops to existing collection
-        }
-      }
-    }
-  }
-
 }
