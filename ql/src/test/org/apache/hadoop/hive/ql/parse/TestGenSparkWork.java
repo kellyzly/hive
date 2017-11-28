@@ -23,6 +23,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.io.Serializable;
+import java.security.acl.Group;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -30,12 +31,18 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 
+import com.sun.org.apache.bcel.internal.generic.Select;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
 import org.apache.hadoop.hive.ql.Context;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator;
+import org.apache.hadoop.hive.ql.exec.FilterOperator;
+import org.apache.hadoop.hive.ql.exec.GroupByOperator;
+import org.apache.hadoop.hive.ql.exec.LimitOperator;
+import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
+import org.apache.hadoop.hive.ql.exec.SelectOperator;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.parse.spark.GenSparkProcContext;
@@ -43,10 +50,15 @@ import org.apache.hadoop.hive.ql.parse.spark.GenSparkUtils;
 import org.apache.hadoop.hive.ql.parse.spark.GenSparkWork;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.FileSinkDesc;
+import org.apache.hadoop.hive.ql.plan.FilterDesc;
+import org.apache.hadoop.hive.ql.plan.GroupByDesc;
+import org.apache.hadoop.hive.ql.plan.LimitDesc;
+import org.apache.hadoop.hive.ql.plan.MapJoinDesc;
 import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.ReduceSinkDesc;
 import org.apache.hadoop.hive.ql.plan.ReduceWork;
+import org.apache.hadoop.hive.ql.plan.SelectDesc;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
 import org.apache.hadoop.hive.ql.plan.TableScanDesc;
 import org.apache.hadoop.hive.ql.plan.SparkWork;
@@ -63,9 +75,18 @@ public class TestGenSparkWork {
 
   GenSparkProcContext ctx;
   GenSparkWork proc;
-  ReduceSinkOperator rs;
-  FileSinkOperator fs;
+
   TableScanOperator ts;
+  FilterOperator fil52;
+  SelectOperator sel2;
+  GroupByOperator gby3;
+  ReduceSinkOperator rs4;
+  GroupByOperator gby5;
+  MapJoinOperator mapJoin58;
+  SelectOperator sel49;
+  LimitOperator limit50;
+  FileSinkOperator fs51;
+
 
   /**
    * @throws java.lang.Exception
@@ -75,19 +96,13 @@ public class TestGenSparkWork {
   public void setUp() throws Exception {
     // Init conf
     final HiveConf conf = new HiveConf(SemanticAnalyzer.class);
+    conf.setBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION,true);
     SessionState.start(conf);
 
     // Init parse context
     final ParseContext pctx = new ParseContext();
     pctx.setContext(new Context(conf));
 
-
-//    HiveConf conf,
-//    ParseContext parseContext,
-//    List<Task<MoveWork>> moveTask,
-//    List<Task<? extends Serializable>> rootTasks,
-//    Set<ReadEntity> inputs,
-//    Set<WriteEntity> outputs,
     Map<String, TableScanOperator> topOps = new HashMap();
     topOps.put("TS[0]",ts);
     ctx = new GenSparkProcContext(
@@ -113,20 +128,59 @@ public class TestGenSparkWork {
       }
     });
 
+    //  TS[0]-FIL[52]-SEL[2]-GBY[3]-RS[4]-GBY[5]-MAPJOIN[58]-SEL[49]-LIM[50]-FS[51]
+//      -FIL[53]-SEL[9]-GBY[10]-RS[11]-GBY[12]-RS[43]-MAPJOIN[58]
     CompilationOpContext cCtx = new CompilationOpContext();
-    fs = new FileSinkOperator(cCtx);
-    fs.setConf(new FileSinkDesc());
-    rs = new ReduceSinkOperator(cCtx);
-    rs.setConf(new ReduceSinkDesc());
+
     TableDesc tableDesc = new TableDesc();
     tableDesc.setProperties(new Properties());
-    rs.getConf().setKeySerializeInfo(tableDesc);
     ts = new TableScanOperator(cCtx);
+
+    fil52 = new FilterOperator(cCtx);
+    sel2 = new SelectOperator(cCtx);
+    gby3 = new GroupByOperator(cCtx);
+    rs4 = new ReduceSinkOperator(cCtx);
+    gby5 = new GroupByOperator(cCtx);
+    mapJoin58 = new MapJoinOperator(cCtx);
+    sel49 = new SelectOperator(cCtx);
+    limit50 = new LimitOperator(cCtx);
+    fs51 = new FileSinkOperator(cCtx);
+
     ts.setConf(new TableScanDesc(null));
-    ts.getChildOperators().add(rs);
-    rs.getParentOperators().add(ts);
-    rs.getChildOperators().add(fs);
-    fs.getParentOperators().add(rs);
+    fil52.setConf(new FilterDesc());
+    sel2.setConf(new SelectDesc());
+    gby3.setConf(new GroupByDesc());
+    rs4.setConf(new ReduceSinkDesc());
+    rs4.getConf().setKeySerializeInfo(tableDesc);
+    gby5.setConf(new GroupByDesc());
+    mapJoin58.setConf(new MapJoinDesc());
+    sel49.setConf(new SelectDesc());
+    limit50.setConf(new LimitDesc());
+    fs51.setConf(new FileSinkDesc());
+
+
+
+
+    ts.getChildOperators().add(fil52);
+    fil52.getParentOperators().add(ts);
+    fil52.getChildOperators().add(sel2);
+    sel2.getParentOperators().add(fil52);
+    sel2.getChildOperators().add(gby3);
+    gby3.getParentOperators().add(sel2);
+    gby3.getChildOperators().add(rs4);
+    rs4.getParentOperators().add(gby3);
+    rs4.getChildOperators().add(gby5);
+    gby5.getParentOperators().add(rs4);
+    gby5.getChildOperators().add(mapJoin58);
+    mapJoin58.getParentOperators().add(gby5);
+    mapJoin58.getChildOperators().add(sel49);
+    sel49.getParentOperators().add(mapJoin58);
+    sel49.getChildOperators().add(limit50);
+    limit50.getParentOperators().add(sel49);
+    limit50.getChildOperators().add(fs51);
+    fs51.getParentOperators().add(limit50);
+
+
     ctx.preceedingWork = null;
     ctx.currentRootOperator = ts;
   }
@@ -139,13 +193,20 @@ public class TestGenSparkWork {
     ctx = null;
     proc = null;
     ts = null;
-    rs = null;
-    fs = null;
+    fil52 = null;
+    sel2 = null;
+    gby3= null;
+    rs4 = null;
+    gby5 = null;
+    mapJoin58 = null;
+    sel49 = null;
+    limit50 = null;
+    fs51 = null;
   }
 
   @Test
   public void testCreateMap() throws SemanticException {
-    proc.process(rs, null, ctx, (Object[])null);
+    proc.process(ts, null, ctx, (Object[])null);
 
     assertNotNull(ctx.currentTask);
     assertTrue(ctx.rootTasks.contains(ctx.currentTask));
@@ -168,16 +229,16 @@ public class TestGenSparkWork {
     assertSame(ctx.preceedingWork, mw);
 
     // should have a new root now
-    assertSame(ctx.currentRootOperator, fs);
+    assertSame(ctx.currentRootOperator, fs51);
   }
 
   @Test
   public void testCreateReduce() throws SemanticException {
     // create map
-    proc.process(rs,  null,  ctx,  (Object[])null);
+    proc.process(rs4,  null,  ctx,  (Object[])null);
 
     // create reduce
-    proc.process(fs, null, ctx, (Object[])null);
+    proc.process(fs51, null, ctx, (Object[])null);
 
     SparkWork work = ctx.currentTask.getWork();
     assertEquals(work.getAllWork().size(),2);
@@ -192,9 +253,9 @@ public class TestGenSparkWork {
     assertNotNull(w.getName());
 
     // map work should start with our ts op
-    assertSame(rw.getReducer(),fs);
+    assertSame(rw.getReducer(),fs51);
 
     // should have severed the ties
-    assertEquals(fs.getParentOperators().size(),0);
+    assertEquals(fs51.getParentOperators().size(),0);
   }
 }
