@@ -1640,6 +1640,9 @@ public class HiveConf extends Configuration {
     HIVE_SHARED_WORK_OPTIMIZATION("hive.optimize.shared.work", true,
         "Whether to enable shared work optimizer. The optimizer finds scan operator over the same table\n" +
         "and follow-up operators in the query plan and merges them if they meet some preconditions."),
+    HIVE_SPARK_SHARED_WORK_OPTIMIZATION("hive.spark.optimize.shared.work", false,
+              "Whether to enable shared work optimizer. The optimizer finds scan operator over the same table\n" +
+                     "and follow-up operators in the query plan and merges them if they meet some preconditions."),
     HIVE_REMOVE_SQ_COUNT_CHECK("hive.optimize.remove.sq_count_check", false,
         "Whether to remove an extra join with sq_count_check for scalar subqueries "
             + "with constant group by keys."),

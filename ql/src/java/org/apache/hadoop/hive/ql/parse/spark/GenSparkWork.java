@@ -27,6 +27,7 @@ import java.util.Stack;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.common.ObjectPair;
 import org.apache.hadoop.hive.ql.exec.HashTableDummyOperator;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
@@ -63,6 +64,7 @@ public class GenSparkWork implements NodeProcessor {
 
   // instance of shared utils
   private GenSparkUtils utils = null;
+  private boolean hasSeperateTS = false;
 
   /**
    * Constructor takes utils as parameter to facilitate testing
@@ -122,7 +124,19 @@ public class GenSparkWork implements NodeProcessor {
           context.smbMapJoinCtxMap.get(smbOp).mapWork = (MapWork) work;
         }
       } else {
-        work = utils.createReduceWork(context, root, sparkWork);
+        // need consider
+        // HIVE_SPARK_SHARED_WORK_OPTIMIZATION true and hasSeperateTS=false:
+        //     seperate the remaining operators include RS as a new Map
+        // HIVE_SPARK_SHARED_WORK_OPTIMIZATION true and hasSeperateTS=true:
+        // HIVE_SPARK_SHARED_WORK_OPTIMIZATION false and hasSeperateTS=false:
+        // HIVE_SPARK_SHARED_WORK_OPTIMIZATION false and hasSeperateTS=true:
+        //     seperate the remaining operators as a Reducer
+        if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
+          work = utils.createMapWork(context,root, sparkWork, null);
+          hasSeperateTS=true;
+        }else {
+          work = utils.createReduceWork(context, root, sparkWork);
+        }
       }
       context.rootToWorkMap.put(root, work);
     }
@@ -202,7 +216,7 @@ public class GenSparkWork implements NodeProcessor {
     // a few information, since in future we may reach the parent operators via a
     // different path, and we may need to connect parent works with the work associated
     // with this root operator.
-    if (root.getNumParent() > 0) {
+    if (root.getNumParent() > 0 && !(root.getParentOperators().get(0) instanceof TableScanOperator)) {
       Preconditions.checkArgument(work instanceof ReduceWork,
           "AssertionError: expected work to be a ReduceWork, but was " + work.getClass().getName());
       ReduceWork reduceWork = (ReduceWork) work;
@@ -277,9 +291,11 @@ public class GenSparkWork implements NodeProcessor {
     // No children means we're at the bottom. If there are more operators to scan
     // the next item will be a new root.
     if (!operator.getChildOperators().isEmpty()) {
-      Preconditions.checkArgument(operator.getChildOperators().size() == 1,
-        "AssertionError: expected operator.getChildOperators().size() to be 1, but was "
-        + operator.getChildOperators().size());
+      if (!context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+        Preconditions.checkArgument(operator.getChildOperators().size() == 1,
+            "AssertionError: expected operator.getChildOperators().size() to be 1, but was "
+                + operator.getChildOperators().size());
+      }
       context.parentOfRoot = operator;
       context.currentRootOperator = operator.getChildOperators().get(0);
       context.preceedingWork = work;
