@@ -62,6 +62,7 @@ import com.google.common.base.Preconditions;
 public class GenSparkWork implements NodeProcessor {
   static final private Logger LOG = LoggerFactory.getLogger(GenSparkWork.class.getName());
   //TODO we need define the num partition  number for the sparkEdgeProperty between Map(TS) and Map( the child of TS-RS)
+  //HIVE-17486
   static final int MAP_PARTITIONS = 1000;
   // instance of shared utils
   private GenSparkUtils utils = null;
@@ -97,6 +98,10 @@ public class GenSparkWork implements NodeProcessor {
     LOG.debug("Root operator: " + root);
     LOG.debug("Leaf operator: " + operator);
 
+    //There is only TS operator in the MapWork, the MapWork following this Map has not been deal with
+    if (root == operator) {
+      hasSeperateTS = false;
+    }
     SparkWork sparkWork = context.currentTask.getWork();
     SMBMapJoinOperator smbOp = GenSparkUtils.getChildOperator(root, SMBMapJoinOperator.class);
 
