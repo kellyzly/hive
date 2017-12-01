@@ -61,7 +61,8 @@ import com.google.common.base.Preconditions;
  */
 public class GenSparkWork implements NodeProcessor {
   static final private Logger LOG = LoggerFactory.getLogger(GenSparkWork.class.getName());
-
+  //TODO we need define the num partition  number for the sparkEdgeProperty between Map(TS) and Map( the child of TS-RS)
+  static final int MAP_PARTITIONS = 1000;
   // instance of shared utils
   private GenSparkUtils utils = null;
   private boolean hasSeperateTS = false;
@@ -133,6 +134,9 @@ public class GenSparkWork implements NodeProcessor {
         //     seperate the remaining operators as a Reducer
         if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
           work = utils.createMapWork(context,root, sparkWork, null);
+          SparkEdgeProperty edgeProperty = new SparkEdgeProperty(SparkEdgeProperty.SHUFFLE_NONE);
+          edgeProperty.setNumPartitions(MAP_PARTITIONS);
+          sparkWork.connect(context.preceedingWork, work, edgeProperty);
           removeParentOfRoot(root);
           hasSeperateTS=true;
         }else {
@@ -310,7 +314,7 @@ public class GenSparkWork implements NodeProcessor {
     if (root.getNumParent() > 0) {
       Preconditions.checkArgument(root.getParentOperators().size() == 1,
           "AssertionError: expected operator.getParentOperators().size() to be 1, but was "
-              + operator.getParentOperators().size());
+              + root.getParentOperators().size());
       Operator parent = root.getParentOperators().get(0);
       root.removeParent(parent);
     }

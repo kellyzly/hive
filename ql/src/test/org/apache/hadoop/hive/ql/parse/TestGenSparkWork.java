@@ -157,7 +157,7 @@ public class TestGenSparkWork {
     sel49.setConf(new SelectDesc());
     limit50.setConf(new LimitDesc());
     fs51.setConf(new FileSinkDesc());
-
+    fs51.getConf().setTableInfo(tableDesc);
 
 
 
