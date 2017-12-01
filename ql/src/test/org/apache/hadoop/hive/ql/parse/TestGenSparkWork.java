@@ -87,6 +87,13 @@ public class TestGenSparkWork {
   LimitOperator limit50;
   FileSinkOperator fs51;
 
+  FilterOperator fil53;
+  SelectOperator sel9;
+  GroupByOperator gby10;
+  ReduceSinkOperator rs11;
+  GroupByOperator gby12;
+  ReduceSinkOperator rs43;
+
 
   /**
    * @throws java.lang.Exception
@@ -146,6 +153,14 @@ public class TestGenSparkWork {
     limit50 = new LimitOperator(cCtx);
     fs51 = new FileSinkOperator(cCtx);
 
+
+    fil53 = new FilterOperator(cCtx);
+    sel9 = new SelectOperator(cCtx);
+    gby10 = new GroupByOperator(cCtx);
+    rs11 = new ReduceSinkOperator(cCtx);
+    gby12 = new GroupByOperator(cCtx);
+    rs43 = new ReduceSinkOperator(cCtx);
+
     ts.setConf(new TableScanDesc(null));
     fil52.setConf(new FilterDesc());
     sel2.setConf(new SelectDesc());
@@ -160,8 +175,18 @@ public class TestGenSparkWork {
     fs51.getConf().setTableInfo(tableDesc);
 
 
+    fil53.setConf(new FilterDesc());
+    sel9.setConf(new SelectDesc());
+    gby10.setConf(new GroupByDesc());
+    rs11.setConf(new ReduceSinkDesc());
+    rs11.getConf().setKeySerializeInfo(tableDesc);
+    gby12.setConf(new GroupByDesc());
+    rs43.setConf(new ReduceSinkDesc());
+    rs43.getConf().setKeySerializeInfo(tableDesc);
+
 
     ts.getChildOperators().add(fil52);
+   // ts.getChildOperators().add(fil53);
     fil52.getParentOperators().add(ts);
     fil52.getChildOperators().add(sel2);
     sel2.getParentOperators().add(fil52);
@@ -179,6 +204,11 @@ public class TestGenSparkWork {
     limit50.getParentOperators().add(sel49);
     limit50.getChildOperators().add(fs51);
     fs51.getParentOperators().add(limit50);
+
+
+
+
+
 
 
     ctx.preceedingWork = null;

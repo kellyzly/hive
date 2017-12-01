@@ -134,9 +134,9 @@ public class SparkCompiler extends TaskCompiler {
     // Remove cyclic dependencies for DPP
     runCycleAnalysisForPartitionPruning(procCtx);
 
-    if (procCtx.getParseContext().getConf().getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
-      new SparkSharedWorkOptimizer().transform(procCtx.getParseContext());
-    }
+//    if (procCtx.getParseContext().getConf().getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+//      new SparkSharedWorkOptimizer().transform(procCtx.getParseContext());
+//    }
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_OPERATOR_TREE);
   }
