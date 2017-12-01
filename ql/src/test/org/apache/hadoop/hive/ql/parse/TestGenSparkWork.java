@@ -204,36 +204,9 @@ public class TestGenSparkWork {
     fs51 = null;
   }
 
-//  @Test
-//  public void testCreateMap() throws SemanticException {
-//    proc.process(ts, null, ctx, (Object[])null);
-//
-//    assertNotNull(ctx.currentTask);
-//    assertTrue(ctx.rootTasks.contains(ctx.currentTask));
-//
-//    SparkWork work = ctx.currentTask.getWork();
-//    assertEquals(work.getAllWork().size(),1);
-//
-//    BaseWork w = work.getAllWork().get(0);
-//    assertTrue(w instanceof MapWork);
-//
-//    MapWork mw = (MapWork)w;
-//
-//    // need to make sure names are set for tez to connect things right
-//    assertNotNull(w.getName());
-//
-//    // map work should start with our ts op
-//    assertSame(mw.getAliasToWork().entrySet().iterator().next().getValue(),ts);
-//
-//    // preceeding work must be set to the newly generated map
-//    assertSame(ctx.preceedingWork, mw);
-//
-//    // should have a new root now
-//    assertSame(ctx.currentRootOperator, fs51);
-//  }
 
   @Test
-  public void testCreateReduce() throws SemanticException {
+  public void testCreateReduceWithoutSharedOpt() throws SemanticException {
     // create map
     proc.process(ts, null, ctx, (Object[])null);
     proc.process(rs4,  null,  ctx,  (Object[])null);
@@ -247,6 +220,35 @@ public class TestGenSparkWork {
     BaseWork w = work.getAllWork().get(1);
     assertTrue(w instanceof ReduceWork);
     assertTrue(work.getParents(w).contains(work.getAllWork().get(0)));
+
+    ReduceWork rw = (ReduceWork)w;
+
+    // need to make sure names are set for tez to connect things right
+    assertNotNull(w.getName());
+
+    // map work should start with our ts op
+    assertSame(rw.getReducer(),fs51);
+
+    // should have severed the ties
+    assertEquals(fs51.getParentOperators().size(),0);
+  }
+
+
+  @Test
+  public void testCreateReduceWithSharedOpt() throws SemanticException {
+    // create map
+    proc.process(ts, null, ctx, (Object[])null);
+    proc.process(rs4,  null,  ctx,  (Object[])null);
+
+    // create reduce
+    proc.process(fs51, null, ctx, (Object[])null);
+
+    SparkWork work = ctx.currentTask.getWork();
+    assertEquals(work.getAllWork().size(),3);
+
+    BaseWork w = work.getAllWork().get(2);
+    assertTrue(w instanceof ReduceWork);
+    assertTrue(work.getParents(w).contains(work.getAllWork().get(1)));
 
     ReduceWork rw = (ReduceWork)w;
 
