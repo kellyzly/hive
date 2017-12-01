@@ -133,6 +133,7 @@ public class GenSparkWork implements NodeProcessor {
         //     seperate the remaining operators as a Reducer
         if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
           work = utils.createMapWork(context,root, sparkWork, null);
+          removeParentOfRoot(root);
           hasSeperateTS=true;
         }else {
           work = utils.createReduceWork(context, root, sparkWork);
@@ -302,5 +303,16 @@ public class GenSparkWork implements NodeProcessor {
     }
 
     return null;
+  }
+
+  //remove the relation between the child of TS and TS
+  private void removeParentOfRoot(Operator<?> root) {
+    if (root.getNumParent() > 0) {
+      Preconditions.checkArgument(root.getParentOperators().size() == 1,
+          "AssertionError: expected operator.getParentOperators().size() to be 1, but was "
+              + operator.getParentOperators().size());
+      Operator parent = root.getParentOperators().get(0);
+      root.removeParent(parent);
+    }
   }
 }
