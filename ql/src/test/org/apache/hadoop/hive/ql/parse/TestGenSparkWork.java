@@ -95,6 +95,7 @@ public class TestGenSparkWork {
   ReduceSinkOperator rs43;
 
 
+
   /**
    * @throws java.lang.Exception
    */
@@ -186,7 +187,7 @@ public class TestGenSparkWork {
 
 
     ts.getChildOperators().add(fil52);
-   // ts.getChildOperators().add(fil53);
+
     fil52.getParentOperators().add(ts);
     fil52.getChildOperators().add(sel2);
     sel2.getParentOperators().add(fil52);
@@ -204,6 +205,20 @@ public class TestGenSparkWork {
     limit50.getParentOperators().add(sel49);
     limit50.getChildOperators().add(fs51);
     fs51.getParentOperators().add(limit50);
+
+
+
+    ts.getChildOperators().add(fil53);
+    fil53.getParentOperators().add(ts);
+    fil53.getChildOperators().add(sel9);
+    sel9.getParentOperators().add(fil53);
+    sel9.getChildOperators().add(rs11);
+    rs11.getParentOperators().add(sel9);
+    rs11.getChildOperators().add(gby12);
+    gby12.getParentOperators().add(rs11);
+    gby12.getChildOperators().add(rs43);
+    rs43.getParentOperators().add(gby12);
+    rs43.getChildOperators().add(mapJoin58);
 
 
 
