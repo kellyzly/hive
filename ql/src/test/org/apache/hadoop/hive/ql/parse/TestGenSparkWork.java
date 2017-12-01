@@ -205,33 +205,36 @@ public class TestGenSparkWork {
   }
 
 
-  @Test
-  public void testCreateReduceWithoutSharedOpt() throws SemanticException {
-    // create map
-    proc.process(ts, null, ctx, (Object[])null);
-    proc.process(rs4,  null,  ctx,  (Object[])null);
-
-    // create reduce
-    proc.process(fs51, null, ctx, (Object[])null);
-
-    SparkWork work = ctx.currentTask.getWork();
-    assertEquals(work.getAllWork().size(),2);
-
-    BaseWork w = work.getAllWork().get(1);
-    assertTrue(w instanceof ReduceWork);
-    assertTrue(work.getParents(w).contains(work.getAllWork().get(0)));
-
-    ReduceWork rw = (ReduceWork)w;
-
-    // need to make sure names are set for tez to connect things right
-    assertNotNull(w.getName());
-
-    // map work should start with our ts op
-    assertSame(rw.getReducer(),fs51);
-
-    // should have severed the ties
-    assertEquals(fs51.getParentOperators().size(),0);
-  }
+//  @Test
+  //readd TestGenSparkWork2.
+  //final HiveConf conf = new HiveConf(SemanticAnalyzer.class);
+ // conf.setBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION,false);
+//  public void testCreateReduceWithoutSharedOpt() throws SemanticException {
+//    // create map
+//    proc.process(ts, null, ctx, (Object[])null);
+//    proc.process(rs4,  null,  ctx,  (Object[])null);
+//
+//    // create reduce
+//    proc.process(fs51, null, ctx, (Object[])null);
+//
+//    SparkWork work = ctx.currentTask.getWork();
+//    assertEquals(work.getAllWork().size(),2);
+//
+//    BaseWork w = work.getAllWork().get(1);
+//    assertTrue(w instanceof ReduceWork);
+//    assertTrue(work.getParents(w).contains(work.getAllWork().get(0)));
+//
+//    ReduceWork rw = (ReduceWork)w;
+//
+//    // need to make sure names are set for tez to connect things right
+//    assertNotNull(w.getName());
+//
+//    // map work should start with our ts op
+//    assertSame(rw.getReducer(),fs51);
+//
+//    // should have severed the ties
+//    assertEquals(fs51.getParentOperators().size(),0);
+//  }
 
 
   @Test

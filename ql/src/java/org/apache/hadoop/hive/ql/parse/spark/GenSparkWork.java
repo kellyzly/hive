@@ -134,6 +134,10 @@ public class GenSparkWork implements NodeProcessor {
         //     seperate the remaining operators as a Reducer
         if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
           work = utils.createMapWork(context,root, sparkWork, null);
+          MapWork mapWork = (MapWork)work;
+          //If context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)==true,
+          //use root(the child of TS)'s operatorId as the alias
+          mapWork.getAliasToWork().put(root.getOperatorId(), root);
           SparkEdgeProperty edgeProperty = new SparkEdgeProperty(SparkEdgeProperty.SHUFFLE_NONE);
           edgeProperty.setNumPartitions(MAP_PARTITIONS);
           sparkWork.connect(context.preceedingWork, work, edgeProperty);
