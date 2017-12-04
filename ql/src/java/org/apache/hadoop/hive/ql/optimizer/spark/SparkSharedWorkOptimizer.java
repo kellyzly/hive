@@ -19,6 +19,7 @@
 package org.apache.hadoop.hive.ql.optimizer.spark;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Multimap;
 import org.apache.hadoop.hive.ql.exec.AppMasterEventOperator;
 import org.apache.hadoop.hive.ql.exec.Operator;
@@ -29,13 +30,13 @@ import org.apache.hadoop.hive.ql.optimizer.SharedResult;
 import org.apache.hadoop.hive.ql.optimizer.SharedWorkOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.SharedWorkOptimizerCache;
 import org.apache.hadoop.hive.ql.optimizer.Transform;
-import org.apache.hadoop.hive.ql.parse.GenTezUtils;
 import org.apache.hadoop.hive.ql.parse.ParseContext;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -84,6 +85,7 @@ public class SparkSharedWorkOptimizer  extends Transform {
 
   private final static Logger LOG = LoggerFactory.getLogger(SparkSharedWorkOptimizer.class);
 
+  private HashMap<TableScanOperator,TableScanOperator> replaceFilterTSMap = new HashMap();
   @Override
   public ParseContext transform(ParseContext pctx) throws SemanticException {
 
@@ -156,6 +158,7 @@ public class SparkSharedWorkOptimizer  extends Transform {
 
           // We can merge
           if (sr.retainableOps.size() > 1) {
+            //TODO find the suitable case for this branch
             // More than TS operator
             Operator<?> lastRetainableOp = sr.retainableOps.get(sr.retainableOps.size() - 1);
             Operator<?> lastDiscardableOp = sr.discardableOps.get(sr.discardableOps.size() - 1);
@@ -209,15 +212,15 @@ public class SparkSharedWorkOptimizer  extends Transform {
             }
             // Replace filter
             retainableTsOp.getConf().setFilterExpr(exprNode);
-            // Replace table scan operator
-            List<Operator<? extends OperatorDesc>> allChildren =
-                Lists.newArrayList(discardableTsOp.getChildOperators());
-            for (Operator<? extends OperatorDesc> op : allChildren) {
-              discardableTsOp.getChildOperators().remove(op);
-              op.replaceParent(discardableTsOp, retainableTsOp);
-              retainableTsOp.getChildOperators().add(op);
-            }
-
+//            // Replace table scan operator
+//            List<Operator<? extends OperatorDesc>> allChildren =
+//                Lists.newArrayList(discardableTsOp.getChildOperators());
+//            for (Operator<? extends OperatorDesc> op : allChildren) {
+//              discardableTsOp.getChildOperators().remove(op);
+//              op.replaceParent(discardableTsOp, retainableTsOp);
+//              retainableTsOp.getChildOperators().add(op);
+//            }
+            replaceFilterTSMap.put(discardableTsOp, retainableTsOp);
             LOG.debug("Merging {} into {}", discardableTsOp, retainableTsOp);
           }
 
@@ -232,15 +235,17 @@ public class SparkSharedWorkOptimizer  extends Transform {
               SemiJoinBranchInfo sjbi = pctx.getRsToSemiJoinBranchInfo().get(op);
               if (sjbi != null && !sr.discardableOps.contains(sjbi.getTsOp()) &&
                   !sr.discardableInputOps.contains(sjbi.getTsOp())) {
-                GenTezUtils.removeSemiJoinOperator(
-                    pctx, (ReduceSinkOperator) op, sjbi.getTsOp());
+                //TODO To find similar code in Spark
+//                GenTezUtils.removeSemiJoinOperator(
+//                    pctx, (ReduceSinkOperator) op, sjbi.getTsOp());
               }
             } else if (op instanceof AppMasterEventOperator) {
               DynamicPruningEventDesc dped = (DynamicPruningEventDesc) op.getConf();
               if (!sr.discardableOps.contains(dped.getTableScan()) &&
                   !sr.discardableInputOps.contains(dped.getTableScan())) {
-                GenTezUtils.removeSemiJoinOperator(
-                    pctx, (AppMasterEventOperator) op, dped.getTableScan());
+                //TODO To find similar code in Spark
+//                GenTezUtils.removeSemiJoinOperator(
+//                    pctx, (AppMasterEventOperator) op, dped.getTableScan());
               }
             }
             LOG.debug("Input operator removed: {}", op);
@@ -261,13 +266,15 @@ public class SparkSharedWorkOptimizer  extends Transform {
                   optimizerCache.tableScanToDPPSource.get((TableScanOperator) op);
               for (Operator<?> dppSource : c) {
                 if (dppSource instanceof ReduceSinkOperator) {
-                  GenTezUtils.removeSemiJoinOperator(pctx,
-                      (ReduceSinkOperator) dppSource,
-                      (TableScanOperator) sr.retainableOps.get(0));
+                  //TODO To find similar code in Spark
+//                  GenTezUtils.removeSemiJoinOperator(pctx,
+//                      (ReduceSinkOperator) dppSource,
+//                      (TableScanOperator) sr.retainableOps.get(0));
                 } else if (dppSource instanceof AppMasterEventOperator) {
-                  GenTezUtils.removeSemiJoinOperator(pctx,
-                      (AppMasterEventOperator) dppSource,
-                      (TableScanOperator) sr.retainableOps.get(0));
+                  //TODO To find similar code in Spark
+//                  GenTezUtils.removeSemiJoinOperator(pctx,
+//                      (AppMasterEventOperator) dppSource,
+//                      (TableScanOperator) sr.retainableOps.get(0));
                 }
               }
             }
@@ -293,6 +300,14 @@ public class SparkSharedWorkOptimizer  extends Transform {
       Map.Entry<String, TableScanOperator> e = it.next();
       if (e.getValue().getNumChild() == 0) {
         it.remove();
+      }
+    }
+
+    for(TableScanOperator discardableTsOp:replaceFilterTSMap.keySet()){
+      TableScanOperator retainedTsOp = replaceFilterTSMap.get(discardableTsOp);
+      if( retainedTsOp.getConf().getFilterExpr()!= null) {
+        discardableTsOp.getConf().setFilterExpr(
+            retainedTsOp.getConf().getFilterExpr());
       }
     }
 

@@ -87,6 +87,7 @@ public class TestGenSparkWork {
   LimitOperator limit50;
   FileSinkOperator fs51;
 
+  TableScanOperator ts2;
   FilterOperator fil53;
   SelectOperator sel9;
   GroupByOperator gby10;
@@ -102,81 +103,6 @@ public class TestGenSparkWork {
   @SuppressWarnings("unchecked")
   @Before
   public void setUp() throws Exception {
-    // Init conf
-    final HiveConf conf = new HiveConf(SemanticAnalyzer.class);
-    conf.setBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION,true);
-    SessionState.start(conf);
-
-    // Init parse context
-    final ParseContext pctx = new ParseContext();
-    pctx.setContext(new Context(conf));
-
-    Map<String, TableScanOperator> topOps = new HashMap();
-    topOps.put("TS[0]",ts);
-    ctx = new GenSparkProcContext(
-      conf,
-      pctx,
-      Collections.EMPTY_LIST,
-      new ArrayList<Task<? extends Serializable>>(),
-      Collections.EMPTY_SET,
-      Collections.EMPTY_SET,
-      topOps);
-
-    proc = new GenSparkWork(new GenSparkUtils() {
-      @Override
-      protected void setupMapWork(MapWork mapWork, GenSparkProcContext context,
-                                  PrunedPartitionList partitions, TableScanOperator root, String alias)
-        throws SemanticException {
-
-        LinkedHashMap<String, Operator<? extends OperatorDesc>> map
-          = new LinkedHashMap<String, Operator<? extends OperatorDesc>>();
-        map.put("foo", root);
-        mapWork.setAliasToWork(map);
-        return;
-      }
-    });
-
-    //  TS[0]-FIL[52]-SEL[2]-GBY[3]-RS[4]-GBY[5]-MAPJOIN[58]-SEL[49]-LIM[50]-FS[51]
-//      -FIL[53]-SEL[9]-GBY[10]-RS[11]-GBY[12]-RS[43]-MAPJOIN[58]
-    CompilationOpContext cCtx = new CompilationOpContext();
-
-    TableDesc tableDesc = new TableDesc();
-    tableDesc.setProperties(new Properties());
-    ts = new TableScanOperator(cCtx);
-
-    fil52 = new FilterOperator(cCtx);
-    sel2 = new SelectOperator(cCtx);
-    gby3 = new GroupByOperator(cCtx);
-    rs4 = new ReduceSinkOperator(cCtx);
-    gby5 = new GroupByOperator(cCtx);
-    mapJoin58 = new MapJoinOperator(cCtx);
-    sel49 = new SelectOperator(cCtx);
-    limit50 = new LimitOperator(cCtx);
-    fs51 = new FileSinkOperator(cCtx);
-
-
-    fil53 = new FilterOperator(cCtx);
-    sel9 = new SelectOperator(cCtx);
-    gby10 = new GroupByOperator(cCtx);
-    rs11 = new ReduceSinkOperator(cCtx);
-    gby12 = new GroupByOperator(cCtx);
-    rs43 = new ReduceSinkOperator(cCtx);
-
-    ts.setConf(new TableScanDesc(null));
-    fil52.setConf(new FilterDesc());
-    sel2.setConf(new SelectDesc());
-    gby3.setConf(new GroupByDesc());
-    rs4.setConf(new ReduceSinkDesc());
-    rs4.getConf().setKeySerializeInfo(tableDesc);
-    gby5.setConf(new GroupByDesc());
-    mapJoin58.setConf(new MapJoinDesc());
-    sel49.setConf(new SelectDesc());
-    limit50.setConf(new LimitDesc());
-    fs51.setConf(new FileSinkDesc());
-    fs51.getConf().setTableInfo(tableDesc);
-
-
-    fil53.setConf(new FilterDesc());
     sel9.setConf(new SelectDesc());
     gby10.setConf(new GroupByDesc());
     rs11.setConf(new ReduceSinkDesc());
@@ -208,8 +134,8 @@ public class TestGenSparkWork {
 
 
 
-    ts.getChildOperators().add(fil53);
-    fil53.getParentOperators().add(ts);
+    ts2.getChildOperators().add(fil53);
+    fil53.getParentOperators().add(ts2);
     fil53.getChildOperators().add(sel9);
     sel9.getParentOperators().add(fil53);
     sel9.getChildOperators().add(rs11);
@@ -247,6 +173,15 @@ public class TestGenSparkWork {
     sel49 = null;
     limit50 = null;
     fs51 = null;
+
+
+    ts2 = null;
+    fil53 = null;
+    sel9 = null;
+    gby10 = null;
+    rs11 = null;
+    gby12 = null;
+    rs43 = null;
   }
 
 
@@ -290,6 +225,7 @@ public class TestGenSparkWork {
 
     // create reduce
     proc.process(fs51, null, ctx, (Object[])null);
+
 
     SparkWork work = ctx.currentTask.getWork();
     assertEquals(work.getAllWork().size(),3);
