@@ -25,11 +25,15 @@ import static org.junit.Assert.assertTrue;
 import java.io.Serializable;
 import java.security.acl.Group;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import com.sun.org.apache.bcel.internal.generic.Select;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -40,6 +44,7 @@ import org.apache.hadoop.hive.ql.exec.FilterOperator;
 import org.apache.hadoop.hive.ql.exec.GroupByOperator;
 import org.apache.hadoop.hive.ql.exec.LimitOperator;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
+import org.apache.hadoop.hive.ql.exec.ObjectCache;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
 import org.apache.hadoop.hive.ql.exec.SelectOperator;
@@ -114,6 +119,7 @@ public class TestGenSparkWork {
 
     Map<String, TableScanOperator> topOps = new HashMap();
     topOps.put("TS[0]",ts);
+    topOps.put("TS[2]",ts2);
     ctx = new GenSparkProcContext(
         conf,
         pctx,
@@ -137,8 +143,8 @@ public class TestGenSparkWork {
       }
     });
 
-    //  TS[0]-FIL[52]-SEL[2]-GBY[3]-RS[4]-GBY[5]-MAPJOIN[58]-SEL[49]-LIM[50]-FS[51]
-//      -FIL[53]-SEL[9]-GBY[10]-RS[11]-GBY[12]-RS[43]-MAPJOIN[58]
+    //  TS[0]-FIL[52]-SEL[2]-GBY[3]-RS[4]-GBY[5]-JOIN[58]-SEL[49]-LIM[50]-FS[51]
+   //   TS[2]-FIL[53]-SEL[9]-GBY[10]-RS[11]-GBY[12]-RS[43]-JOIN[58]
     CompilationOpContext cCtx = new CompilationOpContext();
 
     TableDesc tableDesc = new TableDesc();
@@ -221,12 +227,6 @@ public class TestGenSparkWork {
     rs43.getParentOperators().add(gby12);
     rs43.getChildOperators().add(mapJoin58);
 
-
-
-
-
-
-
     ctx.preceedingWork = null;
     ctx.currentRootOperator = ts;
   }
@@ -297,6 +297,8 @@ public class TestGenSparkWork {
     // create map
     proc.process(ts, null, ctx, (Object[])null);
     proc.process(rs4,  null,  ctx,  (Object[])null);
+    proc.process(ts2,null,ctx, (Object[])null);
+    proc.process(rs43, null, ctx, (Object[])null);
 
     // create reduce
     proc.process(fs51, null, ctx, (Object[])null);
@@ -304,20 +306,56 @@ public class TestGenSparkWork {
 
     SparkWork work = ctx.currentTask.getWork();
     assertEquals(work.getAllWork().size(),3);
+    //Map0
+    BaseWork map0 = work.getAllWork().get(0);
+    System.out.println(toString(map0.getAllRootOperators()));
 
-    BaseWork w = work.getAllWork().get(2);
-    assertTrue(w instanceof ReduceWork);
-    assertTrue(work.getParents(w).contains(work.getAllWork().get(1)));
+   //Map 1
+    BaseWork map1 = work.getAllWork().get(1);
+    System.out.println(toString(map1.getAllRootOperators()));
 
-    ReduceWork rw = (ReduceWork)w;
-
-    // need to make sure names are set for tez to connect things right
-    assertNotNull(w.getName());
-
-    // map work should start with our ts op
-    assertSame(rw.getReducer(),fs51);
-
-    // should have severed the ties
-    assertEquals(fs51.getParentOperators().size(),0);
+    //Reducer 2
+    BaseWork reducer1 = work.getAllWork().get(2);
+    System.out.println(toString(reducer1.getAllRootOperators()));
   }
+
+  public static String toString(Set<Operator<? extends OperatorDesc>> top) {
+    StringBuilder builder = new StringBuilder();
+    Set<String> visited = new HashSet<String>();
+    for (Operator<?> op : top) {
+      if (builder.length() > 0) {
+        builder.append('\n');
+      }
+      toString(builder, visited, op, 0);
+    }
+    return builder.toString();
+  }
+
+  static boolean toString(StringBuilder builder, Set<String> visited, Operator<?> op, int start) {
+    String name = op.toString();
+    boolean added = visited.add(name);
+    if (start > 0) {
+      builder.append("-");
+      start++;
+    }
+    builder.append(name);
+    start += name.length();
+    if (added) {
+      if (op.getNumChild() > 0) {
+        List<Operator<?>> children = op.getChildOperators();
+        for (int i = 0; i < children.size(); i++) {
+          if (i > 0) {
+            builder.append('\n');
+            for (int j = 0; j < start; j++) {
+              builder.append(' ');
+            }
+          }
+          toString(builder, visited, children.get(i), start);
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
 }

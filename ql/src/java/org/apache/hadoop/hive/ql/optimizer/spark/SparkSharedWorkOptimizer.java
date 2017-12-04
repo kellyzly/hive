@@ -227,7 +227,8 @@ public class SparkSharedWorkOptimizer  extends Transform {
           // First we remove the input operators of the expression that
           // we are going to eliminate
           for (Operator<?> op : sr.discardableInputOps) {
-            OperatorUtils.removeOperator(op);
+        //    OperatorUtils.removeOperator(op);
+            //TODO Verify we need optimizerCache.removeOp(op)
             optimizerCache.removeOp(op);
             removedOps.add(op);
             // Remove DPP predicates
@@ -251,11 +252,12 @@ public class SparkSharedWorkOptimizer  extends Transform {
             LOG.debug("Input operator removed: {}", op);
           }
           // Then we merge the operators of the works we are going to merge
-          optimizerCache.removeOpAndCombineWork(discardableTsOp, retainableTsOp);
+         //  optimizerCache.removeOpAndCombineWork(discardableTsOp, retainableTsOp);
           removedOps.add(discardableTsOp);
           // Finally we remove the expression from the tree
           for (Operator<?> op : sr.discardableOps) {
-            OperatorUtils.removeOperator(op);
+         //   OperatorUtils.removeOperator(op);
+         //TODO Verify we need optimizerCache.removeOp(op)
             optimizerCache.removeOp(op);
             removedOps.add(op);
             if (sr.discardableOps.size() == 1) {
