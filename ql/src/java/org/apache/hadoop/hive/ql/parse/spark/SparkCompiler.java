@@ -28,6 +28,9 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.LinkedListMultimap;
+import com.google.common.collect.Multimap;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.Context;
 import org.apache.hadoop.hive.ql.exec.ConditionalTask;
@@ -79,6 +82,7 @@ import org.apache.hadoop.hive.ql.optimizer.spark.SparkJoinHintOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkJoinOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkReduceSinkMapJoinProc;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkSharedWorkOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkSkewJoinResolver;
 import org.apache.hadoop.hive.ql.optimizer.spark.SplitSparkWorkResolver;
 import org.apache.hadoop.hive.ql.optimizer.stats.annotation.AnnotateWithStatistics;
@@ -129,6 +133,10 @@ public class SparkCompiler extends TaskCompiler {
 
     // Remove cyclic dependencies for DPP
     runCycleAnalysisForPartitionPruning(procCtx);
+
+    if (procCtx.getParseContext().getConf().getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+      new SparkSharedWorkOptimizer().transform(procCtx.getParseContext());
+    }
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_OPERATOR_TREE);
   }
@@ -412,8 +420,12 @@ public class SparkCompiler extends TaskCompiler {
     throws SemanticException {
     // create a walker which walks the tree in a DFS manner while maintaining
     // the operator stack. The dispatcher generates the plan from the operator tree
-    Map<Rule, NodeProcessor> opRules = new LinkedHashMap<Rule, NodeProcessor>();
+    Multimap<Rule, NodeProcessor> opRules = LinkedListMultimap.create();
     GenSparkWork genSparkWork = new GenSparkWork(GenSparkUtils.getUtils());
+
+    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+      opRules.put(new RuleRegExp("Split work -TableScan",TableScanOperator.getOperatorName()+"%"),genSparkWork);
+    }
 
     opRules.put(new RuleRegExp("Split Work - ReduceSink",
         ReduceSinkOperator.getOperatorName() + "%"), genSparkWork);
@@ -489,7 +501,7 @@ public class SparkCompiler extends TaskCompiler {
 
     // The dispatcher fires the processor corresponding to the closest matching
     // rule and passes the context along
-    Dispatcher disp = new DefaultRuleDispatcher(null, opRules, procCtx);
+    Dispatcher disp = new SparkRuleDispatcher(null, opRules, procCtx);
     GraphWalker ogw = new GenSparkWorkWalker(disp, procCtx);
     ogw.startWalking(topNodes, null);
   }

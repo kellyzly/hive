@@ -27,6 +27,7 @@ import java.util.Stack;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.common.ObjectPair;
 import org.apache.hadoop.hive.ql.exec.HashTableDummyOperator;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
@@ -60,9 +61,12 @@ import com.google.common.base.Preconditions;
  */
 public class GenSparkWork implements NodeProcessor {
   static final private Logger LOG = LoggerFactory.getLogger(GenSparkWork.class.getName());
-
+  //TODO we need define the num partition  number for the sparkEdgeProperty between Map(TS) and Map( the child of TS-RS)
+  //HIVE-17486
+  static final int MAP_PARTITIONS = 1000;
   // instance of shared utils
   private GenSparkUtils utils = null;
+  private boolean hasSeperateTS = false;
 
   /**
    * Constructor takes utils as parameter to facilitate testing
@@ -94,6 +98,11 @@ public class GenSparkWork implements NodeProcessor {
     LOG.debug("Root operator: " + root);
     LOG.debug("Leaf operator: " + operator);
 
+    //There is only TS operator in the MapWork, the MapWork following this Map has not been deal with
+    //reset hasSeperateTS as false
+    if (root == operator) {
+      hasSeperateTS = false;
+    }
     SparkWork sparkWork = context.currentTask.getWork();
     SMBMapJoinOperator smbOp = GenSparkUtils.getChildOperator(root, SMBMapJoinOperator.class);
 
@@ -122,7 +131,21 @@ public class GenSparkWork implements NodeProcessor {
           context.smbMapJoinCtxMap.get(smbOp).mapWork = (MapWork) work;
         }
       } else {
-        work = utils.createReduceWork(context, root, sparkWork);
+        //put the operators from the child of TS to reduceSink to another Map
+        if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
+          work = utils.createMapWork(context,root, sparkWork, null);
+          MapWork mapWork = (MapWork)work;
+          //If context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)==true,
+          //use root(the child of TS)'s operatorId as the alias
+          mapWork.getAliasToWork().put(root.getOperatorId(), root);
+          SparkEdgeProperty edgeProperty = new SparkEdgeProperty(SparkEdgeProperty.SHUFFLE_NONE);
+          edgeProperty.setNumPartitions(MAP_PARTITIONS);
+          sparkWork.connect(context.preceedingWork, work, edgeProperty);
+          removeParent(root);
+          hasSeperateTS=true;
+        }else {
+          work = utils.createReduceWork(context, root, sparkWork);
+        }
       }
       context.rootToWorkMap.put(root, work);
     }
@@ -202,7 +225,7 @@ public class GenSparkWork implements NodeProcessor {
     // a few information, since in future we may reach the parent operators via a
     // different path, and we may need to connect parent works with the work associated
     // with this root operator.
-    if (root.getNumParent() > 0) {
+    if (root.getNumParent() > 0 && !(root.getParentOperators().get(0) instanceof TableScanOperator)) {
       Preconditions.checkArgument(work instanceof ReduceWork,
           "AssertionError: expected work to be a ReduceWork, but was " + work.getClass().getName());
       ReduceWork reduceWork = (ReduceWork) work;
@@ -277,14 +300,27 @@ public class GenSparkWork implements NodeProcessor {
     // No children means we're at the bottom. If there are more operators to scan
     // the next item will be a new root.
     if (!operator.getChildOperators().isEmpty()) {
-      Preconditions.checkArgument(operator.getChildOperators().size() == 1,
-        "AssertionError: expected operator.getChildOperators().size() to be 1, but was "
-        + operator.getChildOperators().size());
+      if (!context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+        Preconditions.checkArgument(operator.getChildOperators().size() == 1,
+            "AssertionError: expected operator.getChildOperators().size() to be 1, but was "
+                + operator.getChildOperators().size());
+      }
       context.parentOfRoot = operator;
       context.currentRootOperator = operator.getChildOperators().get(0);
       context.preceedingWork = work;
     }
 
     return null;
+  }
+
+  //remove the parent relation for operator
+  private void removeParent(Operator<?> operator) {
+    if (operator.getNumParent() > 0) {
+      Preconditions.checkArgument(operator.getParentOperators().size() == 1,
+          "AssertionError: expected operator.getParentOperators().size() to be 1, but was "
+              + operator.getParentOperators().size());
+      Operator parent = operator.getParentOperators().get(0);
+      operator.removeParent(parent);
+    }
   }
 }
