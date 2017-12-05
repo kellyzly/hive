@@ -38,6 +38,7 @@ public class DDLWork implements Serializable {
   private InsertTableDesc insertTableDesc;
   private CreateIndexDesc createIndexDesc;
   private AlterIndexDesc alterIndexDesc;
+  private AlterMaterializedViewDesc alterMVDesc;
   private DropIndexDesc dropIdxDesc;
   private CreateDatabaseDesc createDatabaseDesc;
   private SwitchDatabaseDesc switchDatabaseDesc;
@@ -94,6 +95,14 @@ public class DDLWork implements Serializable {
   private CreateWMTriggerDesc createWMTriggerDesc;
   private AlterWMTriggerDesc alterWMTriggerDesc;
   private DropWMTriggerDesc dropWMTriggerDesc;
+
+  private CreateOrAlterWMPoolDesc wmPoolDesc;
+  private DropWMPoolDesc dropWMPoolDesc;
+
+  private CreateOrAlterWMMappingDesc wmMappingDesc;
+  private DropWMMappingDesc dropWMMappingDesc;
+
+  private CreateOrDropTriggerToPoolMappingDesc triggerToPoolMappingDesc;
 
   boolean needLock = false;
 
@@ -207,6 +216,16 @@ public class DDLWork implements Serializable {
       AlterIndexDesc alterIndexDesc) {
     this(inputs, outputs);
     this.alterIndexDesc = alterIndexDesc;
+  }
+
+  /**
+   * @param alterMVDesc
+   *          alter materialized view descriptor
+   */
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      AlterMaterializedViewDesc alterMVDesc) {
+    this(inputs, outputs);
+    this.alterMVDesc = alterMVDesc;
   }
 
   /**
@@ -571,31 +590,61 @@ public class DDLWork implements Serializable {
   public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
       DropResourcePlanDesc dropResourcePlanDesc) {
     this(inputs, outputs);
-    this.setDropResourcePlanDesc(dropResourcePlanDesc);
+    this.dropResourcePlanDesc = dropResourcePlanDesc;
   }
 
   public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
       AlterResourcePlanDesc alterResourcePlanDesc) {
     this(inputs, outputs);
-    this.setAlterResourcePlanDesc(alterResourcePlanDesc);
+    this.alterResourcePlanDesc = alterResourcePlanDesc;
   }
 
   public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
       CreateWMTriggerDesc createWMTriggerDesc) {
     this(inputs, outputs);
-    this.setCreateWMTriggerDesc(createWMTriggerDesc);
+    this.createWMTriggerDesc = createWMTriggerDesc;
   }
 
   public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
       AlterWMTriggerDesc alterWMTriggerDesc) {
     this(inputs, outputs);
-    this.setAlterWMTriggerDesc(alterWMTriggerDesc);
+    this.alterWMTriggerDesc = alterWMTriggerDesc;
   }
 
   public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
       DropWMTriggerDesc dropWMTriggerDesc) {
     this(inputs, outputs);
-    this.setDropWMTriggerDesc(dropWMTriggerDesc);
+    this.dropWMTriggerDesc = dropWMTriggerDesc;
+  }
+
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      CreateOrAlterWMPoolDesc wmPoolDesc) {
+    this(inputs, outputs);
+    this.wmPoolDesc = wmPoolDesc;
+  }
+
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      DropWMPoolDesc dropWMPoolDesc) {
+    this(inputs, outputs);
+    this.dropWMPoolDesc = dropWMPoolDesc;
+  }
+
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      CreateOrAlterWMMappingDesc wmMappingDesc) {
+    this(inputs, outputs);
+    this.wmMappingDesc = wmMappingDesc;
+  }
+
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      DropWMMappingDesc dropWMMappingDesc) {
+    this(inputs, outputs);
+    this.dropWMMappingDesc = dropWMMappingDesc;
+  }
+
+  public DDLWork(HashSet<ReadEntity> inputs, HashSet<WriteEntity> outputs,
+      CreateOrDropTriggerToPoolMappingDesc triggerToPoolMappingDesc) {
+    this(inputs, outputs);
+    this.triggerToPoolMappingDesc = triggerToPoolMappingDesc;
   }
 
   /**
@@ -767,6 +816,22 @@ public class DDLWork implements Serializable {
    */
   public void setAlterTblDesc(AlterTableDesc alterTblDesc) {
     this.alterTblDesc = alterTblDesc;
+  }
+
+  /**
+   * @return the alterMVDesc
+   */
+  @Explain(displayName = "Alter Materialized View Operator", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
+  public AlterMaterializedViewDesc getAlterMaterializedViewDesc() {
+    return alterMVDesc;
+  }
+
+  /**
+   * @param alterMVDesc
+   *          the alterMVDesc to set
+   */
+  public void setAlterMVDesc(AlterMaterializedViewDesc alterMVDesc) {
+    this.alterMVDesc = alterMVDesc;
   }
 
   /**
@@ -1087,14 +1152,6 @@ public class DDLWork implements Serializable {
     this.showTblPropertiesDesc = showTblPropertiesDesc;
   }
 
-  public CreateViewDesc getCreateVwDesc() {
-    return createVwDesc;
-  }
-
-  public void setCreateVwDesc(CreateViewDesc createVwDesc) {
-    this.createVwDesc = createVwDesc;
-  }
-
   public void setDescFunctionDesc(DescFunctionDesc descFunctionDesc) {
     this.descFunctionDesc = descFunctionDesc;
   }
@@ -1343,5 +1400,45 @@ public class DDLWork implements Serializable {
 
   public void setDropWMTriggerDesc(DropWMTriggerDesc dropWMTriggerDesc) {
     this.dropWMTriggerDesc = dropWMTriggerDesc;
+  }
+
+  public CreateOrAlterWMPoolDesc getWmPoolDesc() {
+    return wmPoolDesc;
+  }
+
+  public void setWmPoolDesc(CreateOrAlterWMPoolDesc wmPoolDesc) {
+    this.wmPoolDesc = wmPoolDesc;
+  }
+
+  public DropWMPoolDesc getDropWMPoolDesc() {
+    return dropWMPoolDesc;
+  }
+
+  public void setDropWMPoolDesc(DropWMPoolDesc dropWMPoolDesc) {
+    this.dropWMPoolDesc = dropWMPoolDesc;
+  }
+
+  public CreateOrAlterWMMappingDesc getWmMappingDesc() {
+    return wmMappingDesc;
+  }
+
+  public void setWmMappingDesc(CreateOrAlterWMMappingDesc wmMappingDesc) {
+    this.wmMappingDesc = wmMappingDesc;
+  }
+
+  public DropWMMappingDesc getDropWMMappingDesc() {
+    return dropWMMappingDesc;
+  }
+
+  public void setDropWMMappingDesc(DropWMMappingDesc dropWMMappingDesc) {
+    this.dropWMMappingDesc = dropWMMappingDesc;
+  }
+
+  public CreateOrDropTriggerToPoolMappingDesc getTriggerToPoolMappingDesc() {
+    return triggerToPoolMappingDesc;
+  }
+
+  public void setTriggerToPoolMappingDesc(CreateOrDropTriggerToPoolMappingDesc triggerToPoolMappingDesc) {
+    this.triggerToPoolMappingDesc = triggerToPoolMappingDesc;
   }
 }

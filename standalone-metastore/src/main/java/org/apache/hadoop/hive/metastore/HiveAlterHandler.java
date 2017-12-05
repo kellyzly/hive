@@ -57,6 +57,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -70,6 +71,9 @@ public class HiveAlterHandler implements AlterHandler {
   private static final Logger LOG = LoggerFactory.getLogger(HiveAlterHandler.class
       .getName());
 
+  // hiveConf, getConf and setConf are in this class because AlterHandler extends Configurable.
+  // Always use the configuration from HMS Handler.  Making AlterHandler not extend Configurable
+  // is not in the scope of the fix for HIVE-17942.
   @Override
   public Configuration getConf() {
     return hiveConf;
@@ -106,7 +110,7 @@ public class HiveAlterHandler implements AlterHandler {
     String newTblName = newt.getTableName().toLowerCase();
     String newDbName = newt.getDbName().toLowerCase();
 
-    if (!MetaStoreUtils.validateName(newTblName, hiveConf)) {
+    if (!MetaStoreUtils.validateName(newTblName, handler.getConf())) {
       throw new InvalidOperationException(newTblName + " is not a valid object name");
     }
     String validate = MetaStoreUtils.validateTblColumns(newt.getSd().getCols());
@@ -155,7 +159,7 @@ public class HiveAlterHandler implements AlterHandler {
       // Views derive the column type from the base table definition.  So the view definition
       // can be altered to change the column types.  The column type compatibility checks should
       // be done only for non-views.
-      if (MetastoreConf.getBoolVar(hiveConf,
+      if (MetastoreConf.getBoolVar(handler.getConf(),
             MetastoreConf.ConfVars.DISALLOW_INCOMPATIBLE_COL_TYPE_CHANGES) &&
           !oldt.getTableType().equals(TableType.VIRTUAL_VIEW.toString())) {
         // Throws InvalidOperationException if the new column types are not
@@ -252,7 +256,7 @@ public class HiveAlterHandler implements AlterHandler {
             part.setDbName(newDbName);
             part.setTableName(newTblName);
             ColumnStatistics colStats = updateOrGetPartitionColumnStats(msdb, dbname, name,
-                part.getValues(), part.getSd().getCols(), oldt, part);
+                part.getValues(), part.getSd().getCols(), oldt, part, null);
             if (colStats != null) {
               columnStatsNeedUpdated.put(part, colStats);
             }
@@ -260,8 +264,21 @@ public class HiveAlterHandler implements AlterHandler {
           msdb.alterTable(dbname, name, newt);
           // alterPartition is only for changing the partition location in the table rename
           if (dataWasMoved) {
-            for (Partition part : parts) {
-              msdb.alterPartition(newDbName, newTblName, part.getValues(), part);
+
+            int partsToProcess = parts.size();
+            int partitionBatchSize = MetastoreConf.getIntVar(hiveConf,
+                MetastoreConf.ConfVars.BATCH_RETRIEVE_MAX);
+            int batchStart = 0;
+            while (partsToProcess > 0) {
+              int batchEnd = Math.min(batchStart + partitionBatchSize, parts.size());
+              List<Partition> partBatch = parts.subList(batchStart, batchEnd);
+              partsToProcess -= partBatch.size();
+              batchStart += partBatch.size();
+              List<List<String>> partValues = new LinkedList<>();
+              for (Partition part : partBatch) {
+                partValues.add(part.getValues());
+              }
+              msdb.alterPartitions(newDbName, newTblName, partValues, partBatch);
             }
           }
 
@@ -276,7 +293,7 @@ public class HiveAlterHandler implements AlterHandler {
         }
       } else {
         // operations other than table rename
-        if (MetaStoreUtils.requireCalStats(hiveConf, null, null, newt, environmentContext) &&
+        if (MetaStoreUtils.requireCalStats(handler.getConf(), null, null, newt, environmentContext) &&
             !isPartitionedTable) {
           Database db = msdb.getDatabase(newDbName);
           // Update table stats. For partitioned table, we update stats in alterPartition()
@@ -291,7 +308,7 @@ public class HiveAlterHandler implements AlterHandler {
               List<FieldSchema> oldCols = part.getSd().getCols();
               part.getSd().setCols(newt.getSd().getCols());
               ColumnStatistics colStats = updateOrGetPartitionColumnStats(msdb, dbname, name,
-                  part.getValues(), oldCols, oldt, part);
+                  part.getValues(), oldCols, oldt, part, null);
               assert(colStats == null);
               msdb.alterPartition(dbname, name, part.getValues(), part);
             }
@@ -422,7 +439,7 @@ public class HiveAlterHandler implements AlterHandler {
       try {
         msdb.openTransaction();
         oldPart = msdb.getPartition(dbname, name, new_part.getValues());
-        if (MetaStoreUtils.requireCalStats(hiveConf, oldPart, new_part, tbl, environmentContext)) {
+        if (MetaStoreUtils.requireCalStats(handler.getConf(), oldPart, new_part, tbl, environmentContext)) {
           // if stats are same, no need to update
           if (MetaStoreUtils.isFastStatsSame(oldPart, new_part)) {
             MetaStoreUtils.updateBasicState(environmentContext, new_part.getParameters());
@@ -434,7 +451,7 @@ public class HiveAlterHandler implements AlterHandler {
         // PartitionView does not have SD. We do not need update its column stats
         if (oldPart.getSd() != null) {
           updateOrGetPartitionColumnStats(msdb, dbname, name, new_part.getValues(),
-              oldPart.getSd().getCols(), tbl, new_part);
+              oldPart.getSd().getCols(), tbl, new_part, null);
         }
         msdb.alterPartition(dbname, name, new_part.getValues(), new_part);
         if (transactionalListeners != null && !transactionalListeners.isEmpty()) {
@@ -555,13 +572,13 @@ public class HiveAlterHandler implements AlterHandler {
         new_part.getSd().setLocation(oldPart.getSd().getLocation());
       }
 
-      if (MetaStoreUtils.requireCalStats(hiveConf, oldPart, new_part, tbl, environmentContext)) {
+      if (MetaStoreUtils.requireCalStats(handler.getConf(), oldPart, new_part, tbl, environmentContext)) {
         MetaStoreUtils.updatePartitionStatsFast(new_part, wh, false, true, environmentContext);
       }
 
       String newPartName = Warehouse.makePartName(tbl.getPartitionKeys(), new_part.getValues());
       ColumnStatistics cs = updateOrGetPartitionColumnStats(msdb, dbname, name, oldPart.getValues(),
-          oldPart.getSd().getCols(), tbl, new_part);
+          oldPart.getSd().getCols(), tbl, new_part, null);
       msdb.alterPartition(dbname, name, part_vals, new_part);
       if (cs != null) {
         cs.getStatsDesc().setPartName(newPartName);
@@ -647,7 +664,7 @@ public class HiveAlterHandler implements AlterHandler {
         oldParts.add(oldTmpPart);
         partValsList.add(tmpPart.getValues());
 
-        if (MetaStoreUtils.requireCalStats(hiveConf, oldTmpPart, tmpPart, tbl, environmentContext)) {
+        if (MetaStoreUtils.requireCalStats(handler.getConf(), oldTmpPart, tmpPart, tbl, environmentContext)) {
           // Check if stats are same, no need to update
           if (MetaStoreUtils.isFastStatsSame(oldTmpPart, tmpPart)) {
             MetaStoreUtils.updateBasicState(environmentContext, tmpPart.getParameters());
@@ -659,7 +676,7 @@ public class HiveAlterHandler implements AlterHandler {
         // PartitionView does not have SD and we do not need to update its column stats
         if (oldTmpPart.getSd() != null) {
           updateOrGetPartitionColumnStats(msdb, dbname, name, oldTmpPart.getValues(),
-              oldTmpPart.getSd().getCols(), tbl, tmpPart);
+              oldTmpPart.getSd().getCols(), tbl, tmpPart, null);
         }
       }
 
@@ -811,12 +828,14 @@ public class HiveAlterHandler implements AlterHandler {
 
   private ColumnStatistics updateOrGetPartitionColumnStats(
       RawStore msdb, String dbname, String tblname, List<String> partVals,
-      List<FieldSchema> oldCols, Table table, Partition part)
+      List<FieldSchema> oldCols, Table table, Partition part, List<FieldSchema> newCols)
           throws MetaException, InvalidObjectException {
     ColumnStatistics newPartsColStats = null;
     try {
-      List<FieldSchema> newCols = part.getSd() == null ?
-          new ArrayList<>() : part.getSd().getCols();
+      // if newCols are not specified, use default ones.
+      if (newCols == null) {
+        newCols = part.getSd() == null ? new ArrayList<>() : part.getSd().getCols();
+      }
       String oldPartName = Warehouse.makePartName(table.getPartitionKeys(), partVals);
       String newPartName = Warehouse.makePartName(table.getPartitionKeys(), part.getValues());
       boolean rename = !part.getDbName().equals(dbname) || !part.getTableName().equals(tblname)

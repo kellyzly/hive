@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.fs.Trash;
+import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.conf.MetastoreConf;
 import org.apache.hadoop.hive.metastore.conf.MetastoreConf.ConfVars;
 import org.slf4j.Logger;
@@ -37,6 +38,12 @@ import java.util.Collections;
 import java.util.List;
 
 public class FileUtils {
+  private static final PathFilter SNAPSHOT_DIR_PATH_FILTER = new PathFilter() {
+    @Override
+    public boolean accept(Path p) {
+      return ".snapshot".equalsIgnoreCase(p.getName());
+    }
+  };
   private static final Logger LOG = LoggerFactory.getLogger(FileUtils.class);
 
   public static final PathFilter HIDDEN_FILES_PATH_FILTER = new PathFilter() {
@@ -153,23 +160,35 @@ public class FileUtils {
    * Rename a file.  Unlike {@link FileSystem#rename(Path, Path)}, if the destPath already exists
    * and is a directory, this will NOT move the sourcePath into it.  It will throw an IOException
    * instead.
-   * @param fs file system paths are on
+   * @param srcfs file system src paths are on
+   * @param destfs file system dest paths are on
    * @param sourcePath source file or directory to move
    * @param destPath destination file name.  This must be a file and not an existing directory.
    * @return result of fs.rename.
    * @throws IOException if fs.rename throws it, or if destPath already exists.
    */
-  public static boolean rename(FileSystem fs, Path sourcePath, Path destPath) throws IOException {
-    LOG.info("Renaming " + sourcePath + " to " + destPath);
+   public static boolean rename(FileSystem srcFs, FileSystem destFs, Path srcPath,
+                               Path destPath) throws IOException {
+   LOG.info("Renaming " + srcPath + " to " + destPath);
 
-    // If destPath directory exists, rename call will move the sourcePath
-    // into destPath without failing. So check it before renaming.
-    if (fs.exists(destPath)) {
-      throw new IOException("Cannot rename the source path. The destination "
-          + "path already exists.");
-    }
-    return fs.rename(sourcePath, destPath);
-  }
+   // If destPath directory exists, rename call will move the srcPath
+   // into destPath without failing. So check it before renaming.
+   if(destFs.exists(destPath)) {
+     throw new IOException("Cannot rename the source path. The destination "
+         + "path already exists.");
+   }
+
+   if (equalsFileSystem(srcFs, destFs)) {
+       //just rename the directory
+       return srcFs.rename(srcPath, destPath);
+     } else {
+         Configuration conf = new Configuration();
+         return copy(srcFs, srcPath, destFs, destPath,
+         true,    // delete source
+         false, // overwrite destination
+         conf);
+     }
+   }
 
   // NOTE: This is for generating the internal path name for partitions. Users
   // should always use the MetaStore API to get the path name for a partition.
@@ -378,5 +397,31 @@ public class FileUtils {
     //equality in its CACHE .
     //Once equality has been added in HDFS-9159, we should make use of it
     return fs1.getUri().equals(fs2.getUri());
+  }
+
+  /**
+   * Check if the path contains a subdirectory named '.snapshot'
+   * @param p path to check
+   * @param fs filesystem of the path
+   * @return true if p contains a subdirectory named '.snapshot'
+   * @throws IOException
+   */
+  public static boolean pathHasSnapshotSubDir(Path p, FileSystem fs) throws IOException {
+    // Hadoop is missing a public API to check for snapshotable directories. Check with the directory name
+    // until a more appropriate API is provided by HDFS-12257.
+    final FileStatus[] statuses = fs.listStatus(p, FileUtils.SNAPSHOT_DIR_PATH_FILTER);
+    return statuses != null && statuses.length != 0;
+  }
+
+  public static void makeDir(Path path, Configuration conf) throws MetaException {
+    FileSystem fs;
+    try {
+      fs = path.getFileSystem(conf);
+      if (!fs.exists(path)) {
+        fs.mkdirs(path);
+      }
+    } catch (IOException e) {
+      throw new MetaException("Unable to : " + path);
+    }
   }
 }

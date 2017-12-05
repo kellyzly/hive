@@ -19,7 +19,15 @@ package org.apache.hadoop.hive.metastore.conf;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.metastore.DefaultStorageSchemaReader;
+import org.apache.hadoop.hive.metastore.HiveAlterHandler;
+import org.apache.hadoop.hive.metastore.MetastoreTaskThread;
+import org.apache.hadoop.hive.metastore.events.EventCleanerTask;
 import org.apache.hadoop.hive.metastore.security.MetastoreDelegationTokenManager;
+import org.apache.hadoop.hive.metastore.txn.AcidCompactionHistoryService;
+import org.apache.hadoop.hive.metastore.txn.AcidHouseKeeperService;
+import org.apache.hadoop.hive.metastore.txn.AcidOpenTxnsCounterService;
+import org.apache.hadoop.hive.metastore.txn.AcidWriteSetService;
 import org.apache.hadoop.hive.metastore.utils.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,6 +107,7 @@ public class MetastoreConf {
    */
   public static final MetastoreConf.ConfVars[] metaVars = {
       ConfVars.WAREHOUSE,
+      ConfVars.REPLDIR,
       ConfVars.THRIFT_URIS,
       ConfVars.SERVER_PORT,
       ConfVars.THRIFT_CONNECTION_RETRIES,
@@ -239,7 +248,7 @@ public class MetastoreConf {
         "hive.metastore.aggregate.stats.cache.ttl", 600, TimeUnit.SECONDS,
         "Number of seconds for a cached node to be active in the cache before they become stale."),
     ALTER_HANDLER("metastore.alter.handler", "hive.metastore.alter.impl",
-        "org.apache.hadoop.hive.metastore.HiveAlterHandler",
+        HiveAlterHandler.class.getName(),
         "Alter handler.  For now defaults to the Hive one.  Really need a better default option"),
     ASYNC_LOG_ENABLED("metastore.async.log.enabled", "hive.async.log.enabled", true,
         "Whether to enable Log4j2's asynchronous logging. Asynchronous logging can give\n" +
@@ -273,12 +282,27 @@ public class MetastoreConf {
     CACHED_RAW_STORE_CACHE_UPDATE_FREQUENCY("metastore.cached.rawstore.cache.update.frequency",
         "hive.metastore.cached.rawstore.cache.update.frequency", 60, TimeUnit.SECONDS,
         "The time after which metastore cache is updated from metastore DB."),
+    CACHED_RAW_STORE_CACHED_OBJECTS_WHITELIST("metastore.cached.rawstore.cached.object.whitelist",
+        "hive.metastore.cached.rawstore.cached.object.whitelist", ".*", "Comma separated list of regular expressions \n " +
+        "to select the tables (and its partitions, stats etc) that will be cached by CachedStore. \n" +
+        "This can be used in conjunction with hive.metastore.cached.rawstore.cached.object.blacklist. \n" +
+        "Example: .*, db1.*, db2\\.tbl.*. The last item can potentially override patterns specified before."),
+    CACHED_RAW_STORE_CACHED_OBJECTS_BLACKLIST("metastore.cached.rawstore.cached.object.blacklist",
+         "hive.metastore.cached.rawstore.cached.object.blacklist", "", "Comma separated list of regular expressions \n " +
+         "to filter out the tables (and its partitions, stats etc) that will be cached by CachedStore. \n" +
+         "This can be used in conjunction with hive.metastore.cached.rawstore.cached.object.whitelist. \n" +
+         "Example: db2.*, db3\\.tbl1, db3\\..*. The last item can potentially override patterns specified before. \n" +
+         "The blacklist also overrides the whitelist."),
     CAPABILITY_CHECK("metastore.client.capability.check",
         "hive.metastore.client.capability.check", true,
         "Whether to check client capabilities for potentially breaking API usage."),
     CLIENT_CONNECT_RETRY_DELAY("metastore.client.connect.retry.delay",
         "hive.metastore.client.connect.retry.delay", 1, TimeUnit.SECONDS,
         "Number of seconds for the client to wait between consecutive connection attempts"),
+    CLIENT_KERBEROS_PRINCIPAL("metastore.client.kerberos.principal",
+        "hive.metastore.client.kerberos.principal",
+        "", // E.g. "hive-metastore/_HOST@EXAMPLE.COM".
+        "The Kerberos principal associated with the HA cluster of hcat_servers."),
     CLIENT_SOCKET_LIFETIME("metastore.client.socket.lifetime",
         "hive.metastore.client.socket.lifetime", 0, TimeUnit.SECONDS,
         "MetaStore Client socket lifetime in seconds. After this time is exceeded, client\n" +
@@ -439,6 +463,10 @@ public class MetastoreConf {
         "hive.metastore.event.message.factory",
         "org.apache.hadoop.hive.metastore.messaging.json.JSONMessageFactory",
         "Factory class for making encoding and decoding messages in the events generated."),
+    EVENT_DB_NOTIFICATION_API_AUTH("metastore.metastore.event.db.notification.api.auth",
+        "hive.metastore.event.db.notification.api.auth", true,
+        "Should metastore do authorization against database notification related APIs such as get_next_notification.\n" +
+            "If set to true, then only the superusers in proxy settings have the permission"),
     EXECUTE_SET_UGI("metastore.execute.setugi", "hive.metastore.execute.setugi", true,
         "In unsecure mode, setting this property to true will cause the metastore to execute DFS operations using \n" +
             "the client's reported user and group permissions. Note that this property must be set on \n" +
@@ -576,6 +604,8 @@ public class MetastoreConf {
         "Inteval for cmroot cleanup thread."),
     REPLCMENABLED("metastore.repl.cm.enabled", "hive.repl.cm.enabled", false,
         "Turn on ChangeManager, so delete files will go to cmrootdir."),
+    REPLDIR("metastore.repl.rootdir", "hive.repl.rootdir", "/user/hive/repl/",
+        "HDFS root dir for all replication dumps."),
     REPL_COPYFILE_MAXNUMFILES("metastore.repl.copyfile.maxnumfiles",
         "hive.exec.copyfile.maxnumfiles", 1L,
         "Maximum number of files Hive uses to do sequential HDFS copies between directories." +
@@ -646,6 +676,10 @@ public class MetastoreConf {
         "The Java class (implementing the StatsAggregator interface) that is used by default if hive.stats.dbclass is custom type."),
     STATS_DEFAULT_PUBLISHER("metastore.stats.default.publisher", "hive.stats.default.publisher", "",
         "The Java class (implementing the StatsPublisher interface) that is used by default if hive.stats.dbclass is custom type."),
+    STORAGE_SCHEMA_READER_IMPL("metastore.storage.schema.reader.impl", NO_SUCH_KEY,
+        DefaultStorageSchemaReader.class.getName(),
+        "The class to use to read schemas from storage.  It must implement " +
+        "org.apache.hadoop.hive.metastore.StorageSchemaReader"),
     STORE_MANAGER_TYPE("datanucleus.storeManagerType", "datanucleus.storeManagerType", "rdbms", "metadata store type"),
     SUPPORT_SPECICAL_CHARACTERS_IN_TABLE_NAMES("metastore.support.special.characters.tablename",
         "hive.support.special.characters.tablename", true,
@@ -653,6 +687,19 @@ public class MetastoreConf {
             + "When it is set to false, only [a-zA-Z_0-9]+ are supported.\n"
             + "The only supported special character right now is '/'. This flag applies only to quoted table names.\n"
             + "The default value is true."),
+    TASK_THREADS_ALWAYS("metastore.task.threads.always", "metastore.task.threads.always",
+        EventCleanerTask.class.getName() + "," + "org.apache.hadoop.hive.metastore.repl.DumpDirCleanerTask",
+        "Comma separated list of tasks that will be started in separate threads.  These will " +
+            "always be started, regardless of whether the metastore is running in embedded mode " +
+            "or in server mode.  They must implement " + MetastoreTaskThread.class.getName()),
+    TASK_THREADS_REMOTE_ONLY("metastore.task.threads.remote", "metastore.task.threads.remote",
+        AcidHouseKeeperService.class.getName() + "," +
+            AcidOpenTxnsCounterService.class.getName() + "," +
+            AcidCompactionHistoryService.class.getName() + "," +
+            AcidWriteSetService.class.getName(),
+        "Command separated list of tasks that will be started in separate threads.  These will be" +
+            " started only when the metastore is running as a separate service.  They must " +
+            "implement " + MetastoreTaskThread.class.getName()),
     TCP_KEEP_ALIVE("metastore.server.tcp.keepalive",
         "hive.metastore.server.tcp.keepalive", true,
         "Whether to enable TCP keepalive for the metastore server. Keepalive will prevent accumulation of half-open connections."),
@@ -740,6 +787,10 @@ public class MetastoreConf {
     WRITE_SET_REAPER_INTERVAL("metastore.writeset.reaper.interval",
         "hive.writeset.reaper.interval", 60, TimeUnit.SECONDS,
         "Frequency of WriteSet reaper runs"),
+    WM_DEFAULT_POOL_SIZE("metastore.wm.default.pool.size",
+        "hive.metastore.wm.default.pool.size", 4,
+        "The size of a default pool to create when creating an empty resource plan;\n" +
+        "If not positive, no default pool will be created."),
 
     // Hive values we have copied and use as is
     // These two are used to indicate that we are running tests
@@ -791,7 +842,8 @@ public class MetastoreConf {
     // These are all values that we put here just for testing
     STR_TEST_ENTRY("test.str", "hive.test.str", "defaultval", "comment"),
     STR_SET_ENTRY("test.str.set", NO_SUCH_KEY, "a", new Validator.StringSet("a", "b", "c"), ""),
-    STR_LIST_ENTRY("test.str.list", "hive.test.str.list", "a,b,c", "no comment"),
+    STR_LIST_ENTRY("test.str.list", "hive.test.str.list", "a,b,c",
+        "no comment"),
     LONG_TEST_ENTRY("test.long", "hive.test.long", 42, "comment"),
     DOUBLE_TEST_ENTRY("test.double", "hive.test.double", 3.141592654, "comment"),
     TIME_TEST_ENTRY("test.time", "hive.test.time", 1, TimeUnit.SECONDS, "comment"),
@@ -918,6 +970,10 @@ public class MetastoreConf {
      */
     public String getHiveName() {
       return hiveName;
+    }
+
+    public Object getDefaultVal() {
+      return defaultVal;
     }
 
     @Override

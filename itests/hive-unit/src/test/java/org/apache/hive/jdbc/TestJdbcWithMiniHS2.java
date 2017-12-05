@@ -68,6 +68,7 @@ import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
 import org.apache.hadoop.hive.ql.exec.UDF;
 import org.apache.hive.common.util.ReflectionUtil;
 import org.apache.hive.jdbc.miniHS2.MiniHS2;
+import org.apache.hive.service.cli.HiveSQLException;
 import org.datanucleus.ClassLoaderResolver;
 import org.datanucleus.NucleusContext;
 import org.datanucleus.api.jdo.JDOPersistenceManagerFactory;
@@ -203,6 +204,7 @@ public class TestJdbcWithMiniHS2 {
   private static void startMiniHS2(HiveConf conf, boolean httpMode) throws Exception {
     conf.setBoolVar(ConfVars.HIVE_SUPPORT_CONCURRENCY, false);
     conf.setBoolVar(ConfVars.HIVE_SERVER2_LOGGING_OPERATION_ENABLED, false);
+    conf.setBoolVar(ConfVars.HIVESTATSCOLAUTOGATHER, false);
     MiniHS2.Builder builder = new MiniHS2.Builder().withConf(conf).cleanupLocalDirOnStartup(false);
     if (httpMode) {
       builder = builder.withHTTPTransport();
@@ -584,6 +586,18 @@ public class TestJdbcWithMiniHS2 {
     stmt.execute("drop table testSelectThriftOrders");
     stmt.execute("drop table testSelectThriftCustomers");
     stmt.close();
+  }
+
+
+  // Test that jdbc does not allow shell commands starting with "!".
+  @Test
+  public void testBangCommand() throws Exception {
+    try (Statement stmt = conTestDb.createStatement()) {
+      stmt.execute("!ls --l");
+      fail("statement should fail, allowing this would be bad security");
+    } catch (HiveSQLException e) {
+      assertTrue(e.getMessage().contains("cannot recognize input near '!'"));
+    }
   }
 
   @Test

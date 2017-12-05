@@ -107,6 +107,7 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
     int threadCount = Math.min(initialSize,
         HiveConf.getIntVar(initConf, ConfVars.HIVE_SERVER2_TEZ_SESSION_MAX_INIT_THREADS));
     Preconditions.checkArgument(threadCount > 0);
+    this.parentSessionState = SessionState.get();
     if (threadCount == 1) {
       for (int i = 0; i < initialSize; ++i) {
         SessionType session = sessionObjFactory.create(null);
@@ -115,7 +116,6 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
       }
     } else {
       final AtomicInteger remaining = new AtomicInteger(initialSize);
-      this.parentSessionState = SessionState.get();
       @SuppressWarnings("unchecked")
       FutureTask<Boolean>[] threadTasks = new FutureTask[threadCount];
       for (int i = threadTasks.length - 1; i >= 0; --i) {
@@ -265,13 +265,21 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
         poolLock.unlock();
       }
 
-      bySessionId.remove(oldSession.getSessionId());
+      notifyClosed(oldSession);
       // There's some bogus code that can modify the queue name. Force-set it for pool sessions.
       // TODO: this might only be applicable to TezSessionPoolManager; try moving it there?
       newSession.getConf().set(TezConfiguration.TEZ_QUEUE_NAME, queueName);
       // The caller probably created the new session with the old config, but update the
       // registry again just in case. TODO: maybe we should enforce that.
       configureAmRegistry(newSession);
+      if (SessionState.get() == null && parentSessionState != null) {
+        // Tez session relies on a threadlocal for open... If we are on some non-session thread,
+        // just use the same SessionState we used for the initial sessions.
+        // Technically, given that all pool sessions are initially based on this state, shoudln't
+        // we also set this at all times and not rely on an external session stuff? We should
+        // probably just get rid of the thread local usage in TezSessionState.
+        SessionState.setCurrentSessionState(parentSessionState);
+      }
       newSession.open(additionalFiles, scratchDir);
       if (!putSessionBack(newSession, false)) {
         if (LOG.isDebugEnabled()) {
@@ -312,8 +320,6 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
       HiveConf conf = session.getConf();
       conf.set(ConfVars.LLAP_TASK_SCHEDULER_AM_REGISTRY_NAME.varname, amRegistryName);
       conf.set(ConfVars.HIVESESSIONID.varname, session.getSessionId());
-      // TODO: can be enable temporarily for testing
-      // conf.set(LlapTaskSchedulerService.LLAP_PLUGIN_ENDPOINT_ENABLED, "true");
     }
   }
 
@@ -322,34 +328,38 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
     implements ServiceInstanceStateChangeListener<TezAmInstance> {
 
     @Override
-    public void onCreate(TezAmInstance si) {
+    public void onCreate(TezAmInstance si, int ephSeqVersion) {
       String sessionId = si.getSessionId();
       SessionType session = bySessionId.get(sessionId);
       if (session != null) {
-        LOG.info("AM for " + sessionId + " has registered; updating [" + session
-            + "] with an endpoint at " + si.getPluginPort());
-        session.updateFromRegistry(si);
+        LOG.info("AM for " + sessionId + ", v." + ephSeqVersion + " has registered; updating ["
+            + session + "] with an endpoint at " + si.getPluginPort());
+        session.updateFromRegistry(si, ephSeqVersion);
       } else {
         LOG.warn("AM for an unknown " + sessionId + " has registered; ignoring");
       }
     }
 
     @Override
-    public void onUpdate(TezAmInstance serviceInstance) {
-      // Presumably we'd get those later if AM updates its stuff.
-      LOG.info("Received an unexpected update for instance={}. Ignoring", serviceInstance);
+    public void onUpdate(TezAmInstance serviceInstance, int ephSeqVersion) {
+      // We currently never update the znode once registered.
+      // AM recovery will create a new node when it calls register.
+      LOG.warn("Received an unexpected update for instance={}. Ignoring", serviceInstance);
     }
 
     @Override
-    public void onRemove(TezAmInstance serviceInstance) {
+    public void onRemove(TezAmInstance serviceInstance, int ephSeqVersion) {
       String sessionId = serviceInstance.getSessionId();
-      // For now, we don't take any action. In future, we might restore the session based
+      // For now, we don't take any pool action. In future, we might restore the session based
       // on this and get rid of the logic outside of the pool that replaces/reopens/etc.
-      LOG.warn("AM for " + sessionId + " has disappeared from the registry");
-      // TODO: this might race if AM for the same session is restarted internally by Tez.
-      //        It is possible to receive the create before remove and remove the wrong one.
-      //        We need some identity in the value to make sure that doesn't happen.
-      bySessionId.remove(sessionId);
+      SessionType session = bySessionId.get(sessionId);
+      if (session != null) {
+        LOG.info("AM for " + sessionId + ", v." + ephSeqVersion
+            + " has unregistered; updating [" + session + "]");
+        session.updateFromRegistry(null, ephSeqVersion);
+      } else {
+        LOG.warn("AM for an unknown " + sessionId + " has unregistered; ignoring");
+      }
     }
   }
 
@@ -461,11 +471,18 @@ class TezSessionPool<SessionType extends TezSessionPoolSession> {
 
   @VisibleForTesting
   int getCurrentSize() {
-    poolLock.tryLock();
+    poolLock.lock();
     try {
       return pool.size();
     } finally {
       poolLock.unlock();
     }
+  }
+
+  /**
+   * Should be called when the session is no longer needed, to remove it from bySessionId.
+   */
+  public void notifyClosed(TezSessionState session) {
+    bySessionId.remove(session.getSessionId());
   }
 }

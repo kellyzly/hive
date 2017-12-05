@@ -22,9 +22,10 @@ import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
-import org.apache.hadoop.hive.llap.AsyncPbRpcProxy.ExecuteRequestCallback;
 import org.apache.hadoop.hive.llap.plugin.rpc.LlapPluginProtocolProtos.UpdateQueryRequestProto;
 import org.apache.hadoop.hive.llap.plugin.rpc.LlapPluginProtocolProtos.UpdateQueryResponseProto;
+import org.apache.hadoop.hive.ql.exec.tez.AmPluginNode.AmPluginInfo;
+import org.apache.hadoop.hive.ql.exec.tez.LlapPluginEndpointClient.UpdateRequestContext;
 import org.apache.hadoop.hive.ql.optimizer.physical.LlapClusterStateForCompile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,7 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
   private final LlapClusterStateForCompile clusterState;
   private final Thread clusterStateUpdateThread;
   private final LlapPluginEndpointClient amCommunicator;
+  private Runnable clusterChangedCallback;
 
   public GuaranteedTasksAllocator(
       Configuration conf, LlapPluginEndpointClient amCommunicator) {
@@ -46,10 +48,16 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
     this.clusterState = new LlapClusterStateForCompile(conf, CLUSTER_INFO_UPDATE_INTERVAL_MS);
     this.amCommunicator = amCommunicator;
     this.clusterStateUpdateThread = new Thread(new Runnable() {
+      private int lastExecutorCount = -1;
       @Override
       public void run() {
         while (true) {
-          getExecutorCount(true); // Trigger an update if needed.
+          int executorCount = getExecutorCount(true); // Trigger an update if needed.
+          
+          if (executorCount != lastExecutorCount && lastExecutorCount >= 0) {
+            clusterChangedCallback.run();
+          }
+          lastExecutorCount = executorCount;
           try {
             Thread.sleep(CLUSTER_INFO_UPDATE_INTERVAL_MS / 2);
           } catch (InterruptedException e) {
@@ -72,10 +80,6 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
   @Override
   public void stop() {
     clusterStateUpdateThread.interrupt(); // Don't wait for the thread.
-  }
-
-  public void initClusterInfo() {
-    clusterState.initClusterInfo();
   }
 
   @VisibleForTesting
@@ -147,11 +151,13 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
     //       HS2 session pool paths, and this patch removes the last one (reopen).
     UpdateQueryRequestProto request = UpdateQueryRequestProto
         .newBuilder().setGuaranteedTaskCount(intAlloc).build();
+    LOG.info("Updating {} with {} guaranteed tasks", session.getSessionId(), intAlloc);
     amCommunicator.sendUpdateQuery(request, (AmPluginNode)session, new UpdateCallback(session));
   }
 
-  private final class UpdateCallback implements ExecuteRequestCallback<UpdateQueryResponseProto> {
+  private final class UpdateCallback implements UpdateRequestContext {
     private final WmTezSession session;
+    private int endpointVersion = -1;
 
     private UpdateCallback(WmTezSession session) {
       this.session = session;
@@ -161,6 +167,7 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
     public void setResponse(UpdateQueryResponseProto response) {
       int nextUpdate = session.setSentGuaranteed();
       if (nextUpdate >= 0) {
+        LOG.info("Sending a new update " + nextUpdate + " to " + session + " in the response");
         updateSessionAsync(session, nextUpdate);
       }
     }
@@ -173,10 +180,20 @@ public class GuaranteedTasksAllocator implements QueryAllocationManager {
       // RPC already handles retries, so we will just try to kill the session here.
       // This will cause the current query to fail. We could instead keep retrying.
       try {
-        session.handleUpdateError();
+        session.handleUpdateError(endpointVersion);
       } catch (Exception e) {
         LOG.error("Failed to kill the session " + session);
       }
     }
+
+    @Override
+    public void setNodeInfo(AmPluginInfo info, int version) {
+      endpointVersion = version;
+    }
+  }
+
+  @Override
+  public void setClusterChangedCallback(Runnable clusterChangedCallback) {
+    this.clusterChangedCallback = clusterChangedCallback;
   }
 }

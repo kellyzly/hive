@@ -40,8 +40,7 @@ public interface JDOConnectionURLHook {
    * @return the connection URL
    * @throws Exception
    */
-  public String getJdoConnectionUrl(Configuration conf)
-  throws Exception;
+  String getJdoConnectionUrl(Configuration conf) throws Exception;
 
   /**
    * Alerts this that the connection URL was bad. Can be used to collect stats,
@@ -49,5 +48,5 @@ public interface JDOConnectionURLHook {
    *
    * @param url
    */
-  public void notifyBadConnectionUrl(String url);
+  void notifyBadConnectionUrl(String url);
 }

@@ -18,6 +18,8 @@
 
 package org.apache.hadoop.hive.ql.exec.tez;
 
+import org.apache.hadoop.hive.ql.exec.tez.UserPoolMapping.MappingInput;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
@@ -157,23 +159,22 @@ public class TezTask extends Task<TezWork> {
         LOG.warn("The session: " + session + " has not been opened");
       }
       Set<String> desiredCounters = new HashSet<>();
-      if (WorkloadManager.isInUse(ss.getConf())) {
-        WorkloadManager wm = WorkloadManager.getInstance();
-        // TODO: in future, we may also pass getUserIpAddress.
-        // Note: for now this will just block to wait for a session based on parallelism.
-        session = wm.getSession(session, ss.getUserName(), conf);
-        desiredCounters.addAll(wm.getTriggerCounterNames());
-      } else {
-        TezSessionPoolManager pm = TezSessionPoolManager.getInstance();
-        session = pm.getSession(session, conf, false, getWork().getLlapMode());
-        desiredCounters.addAll(pm.getTriggerCounterNames());
-      }
+      // We only need a username for UGI to use for groups; getGroups will fetch the groups
+      // based on Hadoop configuration, as documented at
+      // https://hadoop.apache.org/docs/r2.8.0/hadoop-project-dist/hadoop-common/GroupsMapping.html
+      String userName = ss.getUserName();
+      MappingInput mi = (userName == null) ? new MappingInput("anonymous", null)
+        : new MappingInput(ss.getUserName(),
+            UserGroupInformation.createRemoteUser(ss.getUserName()).getGroups());
+      session = WorkloadManagerFederation.getSession(
+          session, conf, mi, getWork().getLlapMode(), desiredCounters);
 
       TriggerContext triggerContext = ctx.getTriggerContext();
       triggerContext.setDesiredCounters(desiredCounters);
-      session.setTriggerContext(triggerContext);
-      LOG.info("Subscribed to counters: {} for queryId: {}", desiredCounters, triggerContext.getQueryId());
+      LOG.info("Subscribed to counters: {} for queryId: {}",
+          desiredCounters, triggerContext.getQueryId());
       ss.setTezSession(session);
+      session.setTriggerContext(triggerContext);
       try {
         // jobConf will hold all the configuration for hadoop, tez, and hive
         JobConf jobConf = utils.createConfiguration(conf);
@@ -190,8 +191,7 @@ public class TezTask extends Task<TezWork> {
 
         // This is used to compare global and vertex resources. Global resources are originally
         // derived from session conf via localizeTempFilesFromConf. So, use that here.
-        Configuration sessionConf =
-            (session != null && session.getConf() != null) ? session.getConf() : conf;
+        Configuration sessionConf = (session.getConf() != null) ? session.getConf() : conf;
         Map<String,LocalResource> inputOutputLocalResources =
             getExtraLocalResources(jobConf, scratchDir, inputOutputJars, sessionConf);
 
@@ -584,7 +584,10 @@ public class TezTask extends Task<TezWork> {
       try {
         console.printInfo("Dag submit failed due to " + e.getMessage() + " stack trace: "
             + Arrays.toString(e.getStackTrace()) + " retrying...");
+        // TODO: this is temporary, need to refactor how reopen is invoked.
+        TriggerContext oldCtx = sessionState.getTriggerContext();
         sessionState = sessionState.reopen(conf, inputOutputJars);
+        sessionState.setTriggerContext(oldCtx);
         dagClient = sessionState.getSession().submitDAG(dag);
       } catch (Exception retryException) {
         // we failed to submit after retrying. Destroy session and bail.

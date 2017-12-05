@@ -73,20 +73,24 @@ class TezSessionPoolSession extends TezSessionState {
   }
 
   public static abstract class AbstractTriggerValidator {
-    abstract SessionTriggerProvider getSessionTriggerProvider();
+    private ScheduledExecutorService scheduledExecutorService = null;
+    abstract Runnable getTriggerValidatorRunnable();
 
-    abstract TriggerActionHandler getTriggerActionHandler();
+    void startTriggerValidator(long triggerValidationIntervalMs) {
+      if (scheduledExecutorService == null) {
+        scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(
+          new ThreadFactoryBuilder().setDaemon(true).setNameFormat("TriggerValidator").build());
+        Runnable triggerValidatorRunnable = getTriggerValidatorRunnable();
+        scheduledExecutorService.scheduleWithFixedDelay(triggerValidatorRunnable, triggerValidationIntervalMs,
+          triggerValidationIntervalMs, TimeUnit.MILLISECONDS);
+      }
+    }
 
-    abstract TriggerValidatorRunnable getTriggerValidatorRunnable();
-
-    public void startTriggerValidator(Configuration conf) {
-      long triggerValidationIntervalMs = HiveConf.getTimeVar(conf,
-        HiveConf.ConfVars.HIVE_TRIGGER_VALIDATION_INTERVAL_MS, TimeUnit.MILLISECONDS);
-      final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(
-        new ThreadFactoryBuilder().setDaemon(true).setNameFormat("TriggerValidator").build());
-      TriggerValidatorRunnable triggerValidatorRunnable = getTriggerValidatorRunnable();
-      scheduledExecutorService.scheduleWithFixedDelay(triggerValidatorRunnable, triggerValidationIntervalMs,
-        triggerValidationIntervalMs, TimeUnit.MILLISECONDS);
+    void stopTriggerValidator() {
+      if (scheduledExecutorService != null) {
+        scheduledExecutorService.shutdownNow();
+        scheduledExecutorService = null;
+      }
     }
   }
 
@@ -216,7 +220,7 @@ class TezSessionPoolSession extends TezSessionState {
     return this.parent == parent;
   }
 
-  void updateFromRegistry(TezAmInstance si) {
+  void updateFromRegistry(TezAmInstance si, int ephSeqVersion) {
     // Nothing to do.
   }
 }

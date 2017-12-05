@@ -97,7 +97,6 @@ public final class HiveMaterializedViewsRegistry {
    * Creation time is useful to ensure correctness in case multiple HS2 instances are used. */
   private final ConcurrentMap<String, ConcurrentMap<ViewKey, RelOptMaterialization>> materializedViews =
       new ConcurrentHashMap<String, ConcurrentMap<ViewKey, RelOptMaterialization>>();
-  private final ExecutorService pool = Executors.newCachedThreadPool();
 
   private HiveMaterializedViewsRegistry() {
   }
@@ -118,35 +117,33 @@ public final class HiveMaterializedViewsRegistry {
    *
    * The loading process runs on the background; the method returns in the moment that the
    * runnable task is created, thus the views will still not be loaded in the cache when
-   * it does.
+   * it returns.
    */
   public void init(final Hive db) {
-    try {
-      List<Table> tables = new ArrayList<Table>();
-      for (String dbName : db.getAllDatabases()) {
-        // TODO: We should enhance metastore API such that it returns only
-        // materialized views instead of all tables
-        tables.addAll(db.getAllTableObjects(dbName));
-      }
-      pool.submit(new Loader(tables));
-    } catch (HiveException e) {
-      LOG.error("Problem connecting to the metastore when initializing the view registry");
-    }
+    ExecutorService pool = Executors.newCachedThreadPool();
+    pool.submit(new Loader(db));
+    pool.shutdown();
   }
 
   private class Loader implements Runnable {
-    private final List<Table> tables;
+    private final Hive db;
 
-    private Loader(List<Table> tables) {
-      this.tables = tables;
+    private Loader(Hive db) {
+      this.db = db;
     }
 
     @Override
     public void run() {
-      for (Table table : tables) {
-        if (table.isMaterializedView()) {
-          addMaterializedView(table);
+      try {
+        List<Table> materializedViews = new ArrayList<Table>();
+        for (String dbName : db.getAllDatabases()) {
+          materializedViews.addAll(db.getAllMaterializedViewObjects(dbName));
         }
+        for (Table mv : materializedViews) {
+          addMaterializedView(mv);
+        }
+      } catch (HiveException e) {
+        LOG.error("Problem connecting to the metastore when initializing the view registry");
       }
     }
   }
@@ -156,11 +153,13 @@ public final class HiveMaterializedViewsRegistry {
    *
    * @param materializedViewTable the materialized view
    */
-  public RelOptMaterialization addMaterializedView(Table materializedViewTable) {
+  public void addMaterializedView(Table materializedViewTable) {
     // Bail out if it is not enabled for rewriting
     if (!materializedViewTable.isRewriteEnabled()) {
-      return null;
+      return;
     }
+    materializedViewTable.getFullyQualifiedName();
+
     ConcurrentMap<ViewKey, RelOptMaterialization> cq =
         new ConcurrentHashMap<ViewKey, RelOptMaterialization>();
     final ConcurrentMap<ViewKey, RelOptMaterialization> prevCq = materializedViews.putIfAbsent(
@@ -169,10 +168,9 @@ public final class HiveMaterializedViewsRegistry {
       cq = prevCq;
     }
     // Bail out if it already exists
-    final ViewKey vk = new ViewKey(
-        materializedViewTable.getTableName(), materializedViewTable.getCreateTime());
+    final ViewKey vk = ViewKey.forTable(materializedViewTable);
     if (cq.containsKey(vk)) {
-      return null;
+      return;
     }
     // Add to cache
     final String viewQuery = materializedViewTable.getViewExpandedText();
@@ -180,13 +178,13 @@ public final class HiveMaterializedViewsRegistry {
     if (tableRel == null) {
       LOG.warn("Materialized view " + materializedViewTable.getCompleteName() +
               " ignored; error creating view replacement");
-      return null;
+      return;
     }
     final RelNode queryRel = parseQuery(viewQuery);
     if (queryRel == null) {
       LOG.warn("Materialized view " + materializedViewTable.getCompleteName() +
               " ignored; error parsing original query");
-      return null;
+      return;
     }
     RelOptMaterialization materialization = new RelOptMaterialization(tableRel, queryRel,
         null, tableRel.getTable().getQualifiedName());
@@ -194,7 +192,7 @@ public final class HiveMaterializedViewsRegistry {
     if (LOG.isDebugEnabled()) {
       LOG.debug("Cached materialized view for rewriting: " + tableRel.getTable().getQualifiedName());
     }
-    return materialization;
+    return;
   }
 
   /**
@@ -203,13 +201,11 @@ public final class HiveMaterializedViewsRegistry {
    * @param materializedViewTable the materialized view to remove
    */
   public void dropMaterializedView(Table materializedViewTable) {
-    // Bail out if it is not enabled for rewriting
-    if (!materializedViewTable.isRewriteEnabled()) {
-      return;
+    final ViewKey vk = ViewKey.forTable(materializedViewTable);
+    ConcurrentMap<ViewKey, RelOptMaterialization> dbMap = materializedViews.get(materializedViewTable.getDbName());
+    if (dbMap != null) {
+      dbMap.remove(vk);
     }
-    final ViewKey vk = new ViewKey(
-        materializedViewTable.getTableName(), materializedViewTable.getCreateTime());
-    materializedViews.get(materializedViewTable.getDbName()).remove(vk);
   }
 
   /**
@@ -357,6 +353,10 @@ public final class HiveMaterializedViewsRegistry {
     private ViewKey(String viewName, int creationTime) {
       this.viewName = viewName;
       this.creationDate = creationTime;
+    }
+
+    public static ViewKey forTable(Table table) {
+      return new ViewKey(table.getTableName(), table.getCreateTime());
     }
 
     @Override

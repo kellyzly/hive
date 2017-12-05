@@ -43,7 +43,7 @@ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
  * things will be added here as table scan is invoked as part of local work.
  **/
 @Explain(displayName = "TableScan", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
-public class TableScanDesc extends AbstractOperatorDesc {
+public class TableScanDesc extends AbstractOperatorDesc implements IStatsGatherDesc {
   private static final long serialVersionUID = 1L;
 
   private String alias;
@@ -152,6 +152,26 @@ public class TableScanDesc extends AbstractOperatorDesc {
     return alias;
   }
 
+  @Explain(displayName = "table", jsonOnly = true)
+  public String getTableName() {
+    return this.tableMetadata.getTableName();
+  }
+
+  @Explain(displayName = "database", jsonOnly = true)
+  public String getDatabaseName() {
+    return this.tableMetadata.getDbName();
+  }
+
+  @Explain(displayName = "columns", jsonOnly = true)
+  public List<String> getColumnNamesForExplain() {
+    return this.neededColumns;
+  }
+
+  @Explain(displayName = "isTempTable", jsonOnly = true)
+  public boolean isTemporary() {
+    return tableMetadata.isTemporary();
+  }
+
   @Explain(explainLevels = { Level.USER })
   public String getTbl() {
     StringBuilder sb = new StringBuilder();
@@ -179,6 +199,7 @@ public class TableScanDesc extends AbstractOperatorDesc {
   public List<String> getOutputColumnNames() {
     return this.neededColumns;
   }
+
 
   @Explain(displayName = "filterExpr")
   public String getFilterExprString() {
@@ -263,11 +284,13 @@ public class TableScanDesc extends AbstractOperatorDesc {
     this.gatherStats = gatherStats;
   }
 
+  @Override
   @Explain(displayName = "GatherStats", explainLevels = { Level.EXTENDED })
   public boolean isGatherStats() {
     return gatherStats;
   }
 
+  @Override
   public String getTmpStatsDir() {
     return tmpStatsDir;
   }
@@ -296,6 +319,7 @@ public class TableScanDesc extends AbstractOperatorDesc {
     statsAggKeyPrefix = k;
   }
 
+  @Override
   @Explain(displayName = "Statistics Aggregation Key Prefix", explainLevels = { Level.EXTENDED })
   public String getStatsAggPrefix() {
     return statsAggKeyPrefix;

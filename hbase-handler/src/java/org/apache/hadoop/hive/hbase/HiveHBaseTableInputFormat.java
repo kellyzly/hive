@@ -29,7 +29,6 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
-import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
@@ -275,7 +274,7 @@ public class HiveHBaseTableInputFormat extends TableInputFormatBase
         objInspector = (PrimitiveObjectInspector)eval.initialize(null);
         writable = eval.evaluate(null);
       } catch (ClassCastException cce) {
-        throw new IOException("Currently only primitve types are supported. Found: " +
+        throw new IOException("Currently only primitive types are supported. Found: " +
             sc.getConstantDesc().getTypeString());
       } catch (HiveException e) {
         throw new IOException(e);

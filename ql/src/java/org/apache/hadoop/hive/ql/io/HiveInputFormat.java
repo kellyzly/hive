@@ -468,6 +468,9 @@ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
 
     try {
       Utilities.copyTablePropertiesToConf(table, conf);
+      if(tableScan != null) {
+        AcidUtils.setTransactionalTableScan(conf, tableScan.getConf().isAcidTable());
+      }
     } catch (HiveException e) {
       throw new IOException(e);
     }
@@ -549,7 +552,14 @@ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
         } else if (!hadAcidState) {
           AcidUtils.Directory dirInfo = AcidUtils.getAcidState(currDir, conf, validTxnList, Ref.from(false), true, null);
           hadAcidState = true;
-          // TODO [MM gap]: for IOW, we also need to count in base dir, if any
+
+          // Find the base, created for IOW.
+          Path base = dirInfo.getBaseDirectory();
+          if (base != null) {
+            finalPaths.add(base);
+          }
+
+          // Find the parsed delta files.
           for (AcidUtils.ParsedDelta delta : dirInfo.getCurrentDirectories()) {
             Utilities.FILE_OP_LOGGER.debug("Adding input " + delta.getPath());
             finalPaths.add(delta.getPath());

@@ -36,6 +36,8 @@ import org.apache.hadoop.hive.ql.io.parquet.ProjectionPusher;
 import org.apache.hadoop.hive.ql.io.parquet.read.DataWritableReadSupport;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.SerDeStats;
+import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
+import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.io.NullWritable;
@@ -118,20 +120,6 @@ public class VectorizedParquetRecordReader extends ParquetRecordReaderBase
    */
   protected long totalRowCount = 0;
 
-  @VisibleForTesting
-  public VectorizedParquetRecordReader(
-    InputSplit inputSplit,
-    JobConf conf) {
-    try {
-      serDeStats = new SerDeStats();
-      projectionPusher = new ProjectionPusher();
-      initialize(inputSplit, conf);
-    } catch (Throwable e) {
-      LOG.error("Failed to create the vectorized reader due to exception " + e);
-      throw new RuntimeException(e);
-    }
-  }
-
   public VectorizedParquetRecordReader(
       org.apache.hadoop.mapred.InputSplit oldInputSplit, JobConf conf) {
     this(oldInputSplit, conf, null, null, null);
@@ -146,6 +134,10 @@ public class VectorizedParquetRecordReader extends ParquetRecordReaderBase
       this.cacheConf = cacheConf;
       serDeStats = new SerDeStats();
       projectionPusher = new ProjectionPusher();
+      colsToInclude = ColumnProjectionUtils.getReadColumnIDs(conf);
+      //initialize the rowbatchContext
+      jobConf = conf;
+      rbCtx = Utilities.getVectorizedRowBatchCtx(jobConf);
       ParquetInputSplit inputSplit = getSplit(oldInputSplit, conf);
       if (inputSplit != null) {
         initialize(inputSplit, conf);
@@ -171,10 +163,6 @@ public class VectorizedParquetRecordReader extends ParquetRecordReaderBase
   public void initialize(
     InputSplit oldSplit,
     JobConf configuration) throws IOException, InterruptedException {
-    colsToInclude = ColumnProjectionUtils.getReadColumnIDs(configuration);
-    //initialize the rowbatchContext
-    jobConf = configuration;
-    rbCtx = Utilities.getVectorizedRowBatchCtx(jobConf);
     // the oldSplit may be null during the split phase
     if (oldSplit == null) {
       return;
@@ -507,10 +495,46 @@ public class VectorizedParquetRecordReader extends ParquetRecordReaderBase
       }
       return new VectorizedStructColumnReader(fieldReaders);
     case LIST:
+      checkListColumnSupport(((ListTypeInfo) typeInfo).getListElementTypeInfo());
+      if (columnDescriptors == null || columnDescriptors.isEmpty()) {
+        throw new RuntimeException(
+            "Failed to find related Parquet column descriptor with type " + type);
+      }
+      return new VectorizedListColumnReader(descriptors.get(0),
+          pages.getPageReader(descriptors.get(0)), skipTimestampConversion, type);
     case MAP:
+      if (columnDescriptors == null || columnDescriptors.isEmpty()) {
+        throw new RuntimeException(
+            "Failed to find related Parquet column descriptor with type " + type);
+      }
+      List<Type> kvTypes = type.asGroupType().getFields();
+      VectorizedListColumnReader keyListColumnReader = new VectorizedListColumnReader(
+          descriptors.get(0), pages.getPageReader(descriptors.get(0)), skipTimestampConversion,
+          kvTypes.get(0));
+      VectorizedListColumnReader valueListColumnReader = new VectorizedListColumnReader(
+          descriptors.get(1), pages.getPageReader(descriptors.get(1)), skipTimestampConversion,
+          kvTypes.get(1));
+      return new VectorizedMapColumnReader(keyListColumnReader, valueListColumnReader);
     case UNION:
     default:
       throw new RuntimeException("Unsupported category " + typeInfo.getCategory().name());
+    }
+  }
+
+  /**
+   * Check if the element type in list is supported by vectorization read.
+   * Supported type: INT, BYTE, SHORT, DATE, INTERVAL_YEAR_MONTH, LONG, BOOLEAN, DOUBLE, BINARY, STRING, CHAR, VARCHAR,
+   *                 FLOAT, DECIMAL
+   */
+  private void checkListColumnSupport(TypeInfo elementType) {
+    if (elementType instanceof PrimitiveTypeInfo) {
+      switch (((PrimitiveTypeInfo)elementType).getPrimitiveCategory()) {
+        case INTERVAL_DAY_TIME:
+        case TIMESTAMP:
+          throw new RuntimeException("Unsupported primitive type used in list:: " + elementType);
+      }
+    } else {
+      throw new RuntimeException("Unsupported type used in list:" + elementType);
     }
   }
 }

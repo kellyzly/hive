@@ -93,6 +93,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hive.common.BlobStorageUtils;
 import org.apache.hadoop.hive.common.FileUtils;
 import org.apache.hadoop.hive.common.HiveInterruptCallback;
 import org.apache.hadoop.hive.common.HiveInterruptUtils;
@@ -109,7 +110,6 @@ import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Order;
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
 import org.apache.hadoop.hive.ql.Context;
-import org.apache.hadoop.hive.ql.Driver.DriverState;
 import org.apache.hadoop.hive.ql.Driver.LockedDriverState;
 import org.apache.hadoop.hive.ql.ErrorMsg;
 import org.apache.hadoop.hive.ql.QueryPlan;
@@ -152,6 +152,7 @@ import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.DynamicPartitionCtx;
 import org.apache.hadoop.hive.ql.plan.FileSinkDesc;
+import org.apache.hadoop.hive.ql.plan.IStatsGatherDesc;
 import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.MapredWork;
 import org.apache.hadoop.hive.ql.plan.MergeJoinWork;
@@ -160,7 +161,6 @@ import org.apache.hadoop.hive.ql.plan.PartitionDesc;
 import org.apache.hadoop.hive.ql.plan.PlanUtils;
 import org.apache.hadoop.hive.ql.plan.ReduceWork;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
-import org.apache.hadoop.hive.ql.plan.TableScanDesc;
 import org.apache.hadoop.hive.ql.plan.api.Adjacency;
 import org.apache.hadoop.hive.ql.plan.api.Graph;
 import org.apache.hadoop.hive.ql.session.SessionState;
@@ -773,6 +773,11 @@ public final class Utilities {
         serdeConstants.LIST_COLUMNS, cols,
         serdeConstants.LIST_COLUMN_TYPES, colTypes,
         serdeConstants.SERIALIZATION_LIB,LazySimpleSerDe.class.getName())));
+  }
+
+  public static PartitionDesc getPartitionDesc(Partition part, TableDesc tableDesc) throws
+      HiveException {
+    return new PartitionDesc(part, tableDesc);
   }
 
   public static PartitionDesc getPartitionDesc(Partition part) throws HiveException {
@@ -1451,11 +1456,43 @@ public final class Utilities {
       boolean success, Logger log, DynamicPartitionCtx dpCtx, FileSinkDesc conf,
       Reporter reporter) throws IOException,
       HiveException {
-    
+
+    //
+    // Runaway task attempts (which are unable to be killed by MR/YARN) can cause HIVE-17113,
+    // where they can write duplicate output files to tmpPath after de-duplicating the files,
+    // but before tmpPath is moved to specPath.
+    // Fixing this issue will be done differently for blobstore (e.g. S3)
+    // vs non-blobstore (local filesystem, HDFS) filesystems due to differences in
+    // implementation - a directory move in a blobstore effectively results in file-by-file
+    // moves for every file in a directory, while in HDFS/localFS a directory move is just a
+    // single filesystem operation.
+    // - For non-blobstore FS, do the following:
+    //   1) Rename tmpPath to a new directory name to prevent additional files
+    //      from being added by runaway processes.
+    //   2) Remove duplicates from the temp directory
+    //   3) Rename/move the temp directory to specPath
+    //
+    // - For blobstore FS, do the following:
+    //   1) Remove duplicates from tmpPath
+    //   2) Use moveSpecifiedFiles() to perform a file-by-file move of the de-duped files
+    //      to specPath. On blobstore FS, assuming n files in the directory, this results
+    //      in n file moves, compared to 2*n file moves with the previous solution
+    //      (each directory move would result in a file-by-file move of the files in the directory)
+    //
     FileSystem fs = specPath.getFileSystem(hconf);
+    boolean isBlobStorage = BlobStorageUtils.isBlobStorageFileSystem(hconf, fs);
     Path tmpPath = Utilities.toTempPath(specPath);
     Path taskTmpPath = Utilities.toTaskTempPath(specPath);
     if (success) {
+      if (!isBlobStorage && fs.exists(tmpPath)) {
+        //   1) Rename tmpPath to a new directory name to prevent additional files
+        //      from being added by runaway processes.
+        Path tmpPathOriginal = tmpPath;
+        tmpPath = new Path(tmpPath.getParent(), tmpPath.getName() + ".moved");
+        Utilities.rename(fs, tmpPathOriginal, tmpPath);
+      }
+
+      // Remove duplicates from tmpPath
       FileStatus[] statuses = HiveStatsUtils.getFileStatusRecurse(
           tmpPath, ((dpCtx == null) ? 1 : dpCtx.getNumDPCols()), fs);
       if(statuses != null && statuses.length > 0) {
@@ -1464,7 +1501,7 @@ public final class Utilities {
         perfLogger.PerfLogBegin("FileSinkOperator", "RemoveTempOrDuplicateFiles");
         // remove any tmp file or double-committed output files
         List<Path> emptyBuckets = Utilities.removeTempOrDuplicateFiles(
-            fs, statuses, dpCtx, conf, hconf, filesKept);
+            fs, statuses, dpCtx, conf, hconf, filesKept, false);
         perfLogger.PerfLogEnd("FileSinkOperator", "RemoveTempOrDuplicateFiles");
         // create empty buckets if necessary
         if (!emptyBuckets.isEmpty()) {
@@ -1474,15 +1511,18 @@ public final class Utilities {
           filesKept.addAll(emptyBuckets);
           perfLogger.PerfLogEnd("FileSinkOperator", "CreateEmptyBuckets");
         }
+
         // move to the file destination
         Utilities.FILE_OP_LOGGER.trace("Moving tmp dir: {} to: {}", tmpPath, specPath);
 
         perfLogger.PerfLogBegin("FileSinkOperator", "RenameOrMoveFiles");
-        if (HiveConf.getBoolVar(hconf, HiveConf.ConfVars.HIVE_EXEC_MOVE_FILES_FROM_SOURCE_DIR)) {
+        if (isBlobStorage) {
           // HIVE-17113 - avoid copying files that may have been written to the temp dir by runaway tasks,
           // by moving just the files we've tracked from removeTempOrDuplicateFiles().
           Utilities.moveSpecifiedFiles(fs, tmpPath, specPath, filesKept);
         } else {
+          // For non-blobstore case, can just move the directory - the initial directory rename
+          // at the start of this method should prevent files written by runaway tasks.
           Utilities.renameOrMoveFiles(fs, tmpPath, specPath);
         }
         perfLogger.PerfLogEnd("FileSinkOperator", "RenameOrMoveFiles");
@@ -1552,23 +1592,23 @@ public final class Utilities {
   /**
    * Remove all temporary files and duplicate (double-committed) files from a given directory.
    */
-  public static void removeTempOrDuplicateFiles(FileSystem fs, Path path) throws IOException {
-    removeTempOrDuplicateFiles(fs, path, null,null,null);
+  public static void removeTempOrDuplicateFiles(FileSystem fs, Path path, boolean isBaseDir) throws IOException {
+    removeTempOrDuplicateFiles(fs, path, null,null,null, isBaseDir);
   }
 
   public static List<Path> removeTempOrDuplicateFiles(FileSystem fs, Path path,
-      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf) throws IOException {
+      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf, boolean isBaseDir) throws IOException {
     if (path  == null) {
       return null;
     }
     FileStatus[] stats = HiveStatsUtils.getFileStatusRecurse(path,
         ((dpCtx == null) ? 1 : dpCtx.getNumDPCols()), fs);
-    return removeTempOrDuplicateFiles(fs, stats, dpCtx, conf, hconf);
+    return removeTempOrDuplicateFiles(fs, stats, dpCtx, conf, hconf, isBaseDir);
   }
 
   public static List<Path> removeTempOrDuplicateFiles(FileSystem fs, FileStatus[] fileStats,
-      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf) throws IOException {
-    return removeTempOrDuplicateFiles(fs, fileStats, dpCtx, conf, hconf, null);
+      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf, boolean isBaseDir) throws IOException {
+    return removeTempOrDuplicateFiles(fs, fileStats, dpCtx, conf, hconf, null, isBaseDir);
   }
 
   /**
@@ -1577,19 +1617,21 @@ public final class Utilities {
    * @return a list of path names corresponding to should-be-created empty buckets.
    */
   public static List<Path> removeTempOrDuplicateFiles(FileSystem fs, FileStatus[] fileStats,
-      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf, Set<Path> filesKept)
+      DynamicPartitionCtx dpCtx, FileSinkDesc conf, Configuration hconf, Set<Path> filesKept, boolean isBaseDir)
           throws IOException {
     int dpLevels = dpCtx == null ? 0 : dpCtx.getNumDPCols(),
         numBuckets = (conf != null && conf.getTable() != null) ? conf.getTable().getNumBuckets() : 0;
     return removeTempOrDuplicateFiles(
-        fs, fileStats, null, dpLevels, numBuckets, hconf, null, 0, false, filesKept);
+        fs, fileStats, null, dpLevels, numBuckets, hconf, null, 0, false, filesKept, isBaseDir);
   }
-  
+
   private static boolean removeEmptyDpDirectory(FileSystem fs, Path path) throws IOException {
     FileStatus[] items = fs.listStatus(path);
     // remove empty directory since DP insert should not generate empty partitions.
     // empty directories could be generated by crashed Task/ScriptOperator
-    if (items.length != 0) return false;
+    if (items.length != 0) {
+      return false;
+    }
     if (!fs.delete(path, true)) {
       LOG.error("Cannot delete empty directory {}", path);
       throw new IOException("Cannot delete empty directory " + path);
@@ -1599,7 +1641,7 @@ public final class Utilities {
 
   public static List<Path> removeTempOrDuplicateFiles(FileSystem fs, FileStatus[] fileStats,
       String unionSuffix, int dpLevels, int numBuckets, Configuration hconf, Long txnId,
-      int stmtId, boolean isMmTable, Set<Path> filesKept) throws IOException {
+      int stmtId, boolean isMmTable, Set<Path> filesKept, boolean isBaseDir) throws IOException {
     if (fileStats == null) {
       return null;
     }
@@ -1618,7 +1660,7 @@ public final class Utilities {
 
         if (isMmTable) {
           Path mmDir = parts[i].getPath();
-          if (!mmDir.getName().equals(AcidUtils.deltaSubdir(txnId, txnId, stmtId))) {
+          if (!mmDir.getName().equals(AcidUtils.baseOrDeltaSubdir(isBaseDir, txnId, txnId, stmtId))) {
             throw new IOException("Unexpected non-MM directory name " + mmDir);
           }
 
@@ -1626,6 +1668,9 @@ public final class Utilities {
 
           if (!StringUtils.isEmpty(unionSuffix)) {
             path = new Path(path, unionSuffix);
+            if (!fs.exists(path)) {
+              continue;
+            }
           }
         }
 
@@ -1642,7 +1687,7 @@ public final class Utilities {
       if (fileStats.length == 0) {
         return result;
       }
-      Path mmDir = extractNonDpMmDir(txnId, stmtId, items);
+      Path mmDir = extractNonDpMmDir(txnId, stmtId, items, isBaseDir);
       taskIDToFile = removeTempOrDuplicateFilesNonMm(
           fs.listStatus(new Path(mmDir, unionSuffix)), fs);
       if (filesKept != null && taskIDToFile != null) {
@@ -1660,7 +1705,7 @@ public final class Utilities {
           addFilesToPathSet(taskIDToFile.values(), filesKept);
         }
       } else {
-        Path mmDir = extractNonDpMmDir(txnId, stmtId, items);
+        Path mmDir = extractNonDpMmDir(txnId, stmtId, items, isBaseDir);
         taskIDToFile = removeTempOrDuplicateFilesNonMm(fs.listStatus(mmDir), fs);
         if (filesKept != null && taskIDToFile != null) {
           addFilesToPathSet(taskIDToFile.values(), filesKept);
@@ -1672,12 +1717,12 @@ public final class Utilities {
     return result;
   }
 
-  private static Path extractNonDpMmDir(Long txnId, int stmtId, FileStatus[] items) throws IOException {
+  private static Path extractNonDpMmDir(Long txnId, int stmtId, FileStatus[] items, boolean isBaseDir) throws IOException {
     if (items.length > 1) {
       throw new IOException("Unexpected directories for non-DP MM: " + Arrays.toString(items));
     }
     Path mmDir = items[0].getPath();
-    if (!mmDir.getName().equals(AcidUtils.deltaSubdir(txnId, txnId, stmtId))) {
+    if (!mmDir.getName().equals(AcidUtils.baseOrDeltaSubdir(isBaseDir, txnId, txnId, stmtId))) {
       throw new IOException("Unexpected non-MM directory " + mmDir);
     }
       Utilities.FILE_OP_LOGGER.trace("removeTempOrDuplicateFiles processing files in MM directory {}", mmDir);
@@ -3240,7 +3285,7 @@ public final class Utilities {
       boolean hasLogged = false;
 
       for (Map.Entry<Path, ArrayList<String>> e : pathToAliases) {
-        if (lDrvStat != null && lDrvStat.driverState == DriverState.INTERRUPT) {
+        if (lDrvStat != null && lDrvStat.isAborted()) {
           throw new IOException("Operation is Canceled.");
         }
 
@@ -3296,7 +3341,7 @@ public final class Utilities {
       finalPathsToAdd.addAll(getInputPathsWithPool(job, work, hiveScratchDir, ctx, skipDummy, pathsToAdd, pool));
     } else {
       for (final Path path : pathsToAdd) {
-        if (lDrvStat != null && lDrvStat.driverState == DriverState.INTERRUPT) {
+        if (lDrvStat != null && lDrvStat.isAborted()) {
           throw new IOException("Operation is Canceled.");
         }
         Path newPath = new GetInputPathsCallable(path, job, work, hiveScratchDir, ctx, skipDummy).call();
@@ -3317,7 +3362,7 @@ public final class Utilities {
     try {
       Map<GetInputPathsCallable, Future<Path>> getPathsCallableToFuture = new LinkedHashMap<>();
       for (final Path path : pathsToAdd) {
-        if (lDrvStat != null && lDrvStat.driverState == DriverState.INTERRUPT) {
+        if (lDrvStat != null && lDrvStat.isAborted()) {
           throw new IOException("Operation is Canceled.");
         }
         GetInputPathsCallable callable = new GetInputPathsCallable(path, job, work, hiveScratchDir, ctx, skipDummy);
@@ -3326,7 +3371,7 @@ public final class Utilities {
       pool.shutdown();
 
       for (Map.Entry<GetInputPathsCallable, Future<Path>> future : getPathsCallableToFuture.entrySet()) {
-        if (lDrvStat != null && lDrvStat.driverState == DriverState.INTERRUPT) {
+        if (lDrvStat != null && lDrvStat.isAborted()) {
           throw new IOException("Operation is Canceled.");
         }
 
@@ -3571,7 +3616,9 @@ public final class Utilities {
 
       if (op instanceof FileSinkOperator) {
         FileSinkDesc fdesc = ((FileSinkOperator) op).getConf();
-        if (fdesc.isMmTable()) continue; // No need to create for MM tables
+        if (fdesc.isMmTable()) {
+          continue; // No need to create for MM tables
+        }
         Path tempDir = fdesc.getDirName();
         if (tempDir != null) {
           Path tempPath = Utilities.toTempPath(tempDir);
@@ -3887,10 +3934,8 @@ public final class Utilities {
     for (Operator<? extends OperatorDesc> op : ops) {
       OperatorDesc desc = op.getConf();
       String statsTmpDir = null;
-      if (desc instanceof FileSinkDesc) {
-         statsTmpDir = ((FileSinkDesc)desc).getStatsTmpDir();
-      } else if (desc instanceof TableScanDesc) {
-        statsTmpDir = ((TableScanDesc) desc).getTmpStatsDir();
+      if (desc instanceof IStatsGatherDesc) {
+        statsTmpDir = ((IStatsGatherDesc) desc).getTmpStatsDir();
       }
       if (statsTmpDir != null && !statsTmpDir.isEmpty()) {
         statsTmpDirs.add(statsTmpDir);
@@ -3917,7 +3962,7 @@ public final class Utilities {
     String[] classNames = org.apache.hadoop.util.StringUtils.getStrings(HiveConf.getVar(hiveConf,
         confVar));
     if (classNames == null) {
-      return Collections.emptyList();
+      return new ArrayList<>(0);
     }
     Collection<Class<?>> classList = new ArrayList<Class<?>>(classNames.length);
     for (String className : classNames) {
@@ -4014,7 +4059,7 @@ public final class Utilities {
   }
 
   public static Path[] getMmDirectoryCandidates(FileSystem fs, Path path, int dpLevels,
-      int lbLevels, PathFilter filter, long txnId, int stmtId, Configuration conf)
+      int lbLevels, PathFilter filter, long txnId, int stmtId, Configuration conf, boolean isBaseDir)
           throws IOException {
     int skipLevels = dpLevels + lbLevels;
     if (filter == null) {
@@ -4029,7 +4074,7 @@ public final class Utilities {
         || (HiveConf.getBoolVar(conf, ConfVars.HIVE_MM_AVOID_GLOBSTATUS_ON_S3) && isS3(fs))) {
       return getMmDirectoryCandidatesRecursive(fs, path, skipLevels, filter);
     }
-    return getMmDirectoryCandidatesGlobStatus(fs, path, skipLevels, filter, txnId, stmtId);
+    return getMmDirectoryCandidatesGlobStatus(fs, path, skipLevels, filter, txnId, stmtId, isBaseDir);
   }
 
   private static boolean isS3(FileSystem fs) {
@@ -4042,7 +4087,9 @@ public final class Utilities {
   }
 
   private static Path[] statusToPath(FileStatus[] statuses) {
-    if (statuses == null) return null;
+    if (statuses == null) {
+      return null;
+    }
     Path[] paths = new Path[statuses.length];
     for (int i = 0; i < statuses.length; ++i) {
       paths[i] = statuses[i].getPath();
@@ -4072,7 +4119,9 @@ public final class Utilities {
       Utilities.FILE_OP_LOGGER.trace("Looking at {} from {}", subDir, lfsPath);
 
       // If sorted, we'll skip a bunch of files.
-      if (lastRelDir != null && subDir.startsWith(lastRelDir)) continue;
+      if (lastRelDir != null && subDir.startsWith(lastRelDir)) {
+        continue;
+      }
       int startIx = skipLevels > 0 ? -1 : 0;
       for (int i = 0; i < skipLevels; ++i) {
         startIx = subDir.indexOf(Path.SEPARATOR_CHAR, startIx + 1);
@@ -4082,7 +4131,9 @@ public final class Utilities {
           break;
         }
       }
-      if (startIx == -1) continue;
+      if (startIx == -1) {
+        continue;
+      }
       int endIx = subDir.indexOf(Path.SEPARATOR_CHAR, startIx + 1);
       if (endIx == -1) {
         Utilities.FILE_OP_LOGGER.info("Expected level of nesting ({}) is not present in"
@@ -4091,14 +4142,16 @@ public final class Utilities {
       }
       lastRelDir = subDir = subDir.substring(0, endIx);
       Path candidate = new Path(relRoot, subDir);
-      if (!filter.accept(candidate)) continue;
+      if (!filter.accept(candidate)) {
+        continue;
+      }
       results.add(fs.makeQualified(candidate));
     }
     return results.toArray(new Path[results.size()]);
   }
 
   private static Path[] getMmDirectoryCandidatesGlobStatus(FileSystem fs,
-      Path path, int skipLevels, PathFilter filter, long txnId, int stmtId) throws IOException {
+      Path path, int skipLevels, PathFilter filter, long txnId, int stmtId, boolean isBaseDir) throws IOException {
     StringBuilder sb = new StringBuilder(path.toUri().getPath());
     for (int i = 0; i < skipLevels; i++) {
       sb.append(Path.SEPARATOR).append('*');
@@ -4108,7 +4161,7 @@ public final class Utilities {
       // sb.append(Path.SEPARATOR).append(AcidUtils.deltaSubdir(txnId, txnId)).append("_*");
       throw new AssertionError("GlobStatus should not be called without a statement ID");
     } else {
-      sb.append(Path.SEPARATOR).append(AcidUtils.deltaSubdir(txnId, txnId, stmtId));
+      sb.append(Path.SEPARATOR).append(AcidUtils.baseOrDeltaSubdir(isBaseDir, txnId, txnId, stmtId));
     }
     Path pathPattern = new Path(path, sb.toString());
     return statusToPath(fs.globStatus(pathPattern, filter));
@@ -4116,9 +4169,9 @@ public final class Utilities {
 
   private static void tryDeleteAllMmFiles(FileSystem fs, Path specPath, Path manifestDir,
                                           int dpLevels, int lbLevels, JavaUtils.IdPathFilter filter,
-                                          long txnId, int stmtId, Configuration conf) throws IOException {
+                                          long txnId, int stmtId, Configuration conf, boolean isBaseDir) throws IOException {
     Path[] files = getMmDirectoryCandidates(
-        fs, specPath, dpLevels, lbLevels, filter, txnId, stmtId, conf);
+        fs, specPath, dpLevels, lbLevels, filter, txnId, stmtId, conf, isBaseDir);
     if (files != null) {
       for (Path path : files) {
         Utilities.FILE_OP_LOGGER.info("Deleting {} on failure", path);
@@ -4131,12 +4184,12 @@ public final class Utilities {
 
 
   public static void writeMmCommitManifest(List<Path> commitPaths, Path specPath, FileSystem fs,
-      String taskId, Long txnId, int stmtId, String unionSuffix) throws HiveException {
-    if (CollectionUtils.isEmpty(commitPaths)) {
+      String taskId, Long txnId, int stmtId, String unionSuffix, boolean isInsertOverwrite) throws HiveException {
+    if (commitPaths.isEmpty()) {
       return;
     }
     // We assume one FSOP per task (per specPath), so we create it in specPath.
-    Path manifestPath = getManifestDir(specPath, txnId, stmtId, unionSuffix);
+    Path manifestPath = getManifestDir(specPath, txnId, stmtId, unionSuffix, isInsertOverwrite);
     manifestPath = new Path(manifestPath, taskId + MANIFEST_EXTENSION);
     Utilities.FILE_OP_LOGGER.info("Writing manifest to {} with {}", manifestPath, commitPaths);
     try {
@@ -4155,8 +4208,10 @@ public final class Utilities {
     }
   }
 
-  private static Path getManifestDir(Path specPath, long txnId, int stmtId, String unionSuffix) {
-    Path manifestPath = new Path(specPath, "_tmp." + AcidUtils.deltaSubdir(txnId, txnId, stmtId));
+  private static Path getManifestDir(Path specPath, long txnId, int stmtId, String unionSuffix, boolean isInsertOverwrite) {
+    Path manifestPath = new Path(specPath, "_tmp." + 
+      AcidUtils.baseOrDeltaSubdir(isInsertOverwrite, txnId, txnId, stmtId));
+
     return (unionSuffix == null) ? manifestPath : new Path(manifestPath, unionSuffix);
   }
 
@@ -4173,13 +4228,13 @@ public final class Utilities {
 
   public static void handleMmTableFinalPath(Path specPath, String unionSuffix, Configuration hconf,
       boolean success, int dpLevels, int lbLevels, MissingBucketsContext mbc, long txnId, int stmtId,
-      Reporter reporter, boolean isMmTable, boolean isMmCtas) throws IOException, HiveException {
+      Reporter reporter, boolean isMmTable, boolean isMmCtas, boolean isInsertOverwrite) throws IOException, HiveException {
     FileSystem fs = specPath.getFileSystem(hconf);
-    Path manifestDir = getManifestDir(specPath, txnId, stmtId, unionSuffix);
+    Path manifestDir = getManifestDir(specPath, txnId, stmtId, unionSuffix, isInsertOverwrite);
     if (!success) {
       JavaUtils.IdPathFilter filter = new JavaUtils.IdPathFilter(txnId, stmtId, true);
       tryDeleteAllMmFiles(fs, specPath, manifestDir, dpLevels, lbLevels,
-          filter, txnId, stmtId, hconf);
+          filter, txnId, stmtId, hconf, isInsertOverwrite);
       return;
     }
 
@@ -4202,13 +4257,13 @@ public final class Utilities {
     }
 
     Utilities.FILE_OP_LOGGER.debug("Looking for files in: {}", specPath);
-    JavaUtils.IdPathFilter filter = new JavaUtils.IdPathFilter(txnId, stmtId, true);
+    JavaUtils.IdPathFilter filter = new JavaUtils.IdPathFilter(txnId, stmtId, true, false, isInsertOverwrite);
     if (isMmCtas && !fs.exists(specPath)) {
       Utilities.FILE_OP_LOGGER.info("Creating table directory for CTAS with no output at {}", specPath);
       FileUtils.mkdir(fs, specPath, hconf);
     }
     Path[] files = getMmDirectoryCandidates(
-        fs, specPath, dpLevels, lbLevels, filter, txnId, stmtId, hconf);
+        fs, specPath, dpLevels, lbLevels, filter, txnId, stmtId, hconf, isInsertOverwrite);
     ArrayList<Path> mmDirectories = new ArrayList<>();
     if (files != null) {
       for (Path path : files) {
@@ -4252,11 +4307,15 @@ public final class Utilities {
       throw new HiveException("The following files were committed but not found: " + committed);
     }
 
-    if (mmDirectories.isEmpty()) return;
+    if (mmDirectories.isEmpty()) {
+      return;
+    }
 
     // TODO: see HIVE-14886 - removeTempOrDuplicateFiles is broken for list bucketing,
     //       so maintain parity here by not calling it at all.
-    if (lbLevels != 0) return;
+    if (lbLevels != 0) {
+      return;
+    }
     // Create fake file statuses to avoid querying the file system. removeTempOrDuplicateFiles
     // doesn't need tocheck anything except path and directory status for MM directories.
     FileStatus[] finalResults = new FileStatus[mmDirectories.size()];
@@ -4265,7 +4324,7 @@ public final class Utilities {
     }
     List<Path> emptyBuckets = Utilities.removeTempOrDuplicateFiles(fs, finalResults,
         unionSuffix, dpLevels, mbc == null ? 0 : mbc.numBuckets, hconf, txnId, stmtId,
-            isMmTable, null);
+            isMmTable, null, isInsertOverwrite);
     // create empty buckets if necessary
     if (!emptyBuckets.isEmpty()) {
       assert mbc != null;
@@ -4284,7 +4343,9 @@ public final class Utilities {
     for (FileStatus child : fs.listStatus(dir)) {
       Path childPath = child.getPath();
       if (unionSuffix == null) {
-        if (committed.remove(childPath.toString())) continue; // A good file.
+        if (committed.remove(childPath.toString())) {
+          continue; // A good file.
+        }
         deleteUncommitedFile(childPath, fs);
       } else if (!child.isDirectory()) {
         if (committed.contains(childPath.toString())) {

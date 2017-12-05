@@ -1,3 +1,5 @@
+-- SORT_QUERY_RESULTS
+
 set hive.strict.checks.cartesian.product=false;
 set hive.materializedview.rewriting=true;
 set hive.stats.column.autogather=true;
@@ -29,6 +31,26 @@ explain
 select a, c from cmv_basetable where a = 3;
 
 select a, c from cmv_basetable where a = 3;
+
+alter materialized view cmv_mat_view2 disable rewrite;
+
+explain
+select * from (
+  (select a, c from cmv_basetable where a = 3) table1
+  join
+  (select a, c from cmv_basetable where d = 3) table2
+  on table1.a = table2.a);
+
+select * from (
+  (select a, c from cmv_basetable where a = 3) table1
+  join
+  (select a, c from cmv_basetable where d = 3) table2
+  on table1.a = table2.a);
+
+explain
+alter materialized view cmv_mat_view2 enable rewrite;
+
+alter materialized view cmv_mat_view2 enable rewrite;
 
 explain
 select * from (

@@ -262,6 +262,8 @@ public class Operation2Privilege {
 (OWNER_PRIV_AR, OWNER_PRIV_AR));
     op2Priv.put(HiveOperationType.DROPVIEW, PrivRequirement.newIOPrivRequirement
 (OWNER_PRIV_AR, OWNER_PRIV_AR));
+    op2Priv.put(HiveOperationType.ALTER_MATERIALIZED_VIEW_REWRITE, PrivRequirement.newIOPrivRequirement
+(OWNER_PRIV_AR, OWNER_PRIV_AR));
     op2Priv.put(HiveOperationType.DROP_MATERIALIZED_VIEW, PrivRequirement.newIOPrivRequirement
 (OWNER_PRIV_AR, OWNER_PRIV_AR));
 
@@ -317,6 +319,12 @@ public class Operation2Privilege {
     adminPrivOps.add(HiveOperationType.CREATE_TRIGGER);
     adminPrivOps.add(HiveOperationType.ALTER_TRIGGER);
     adminPrivOps.add(HiveOperationType.DROP_TRIGGER);
+    adminPrivOps.add(HiveOperationType.CREATE_POOL);
+    adminPrivOps.add(HiveOperationType.ALTER_POOL);
+    adminPrivOps.add(HiveOperationType.DROP_POOL);
+    adminPrivOps.add(HiveOperationType.CREATE_MAPPING);
+    adminPrivOps.add(HiveOperationType.ALTER_MAPPING);
+    adminPrivOps.add(HiveOperationType.DROP_MAPPING);
 
     // operations require select priv
     op2Priv.put(HiveOperationType.SHOWCOLUMNS, PrivRequirement.newIOPrivRequirement
@@ -391,7 +399,8 @@ public class Operation2Privilege {
 (null, null));
     op2Priv.put(HiveOperationType.SHOWVIEWS, PrivRequirement.newIOPrivRequirement
 (null, null));
-
+    op2Priv.put(HiveOperationType.SHOWMATERIALIZEDVIEWS, PrivRequirement.newIOPrivRequirement
+(null, null));
     op2Priv.put(HiveOperationType.LOCKTABLE, PrivRequirement.newIOPrivRequirement
 (null, null));
     op2Priv.put(HiveOperationType.UNLOCKTABLE, PrivRequirement.newIOPrivRequirement
@@ -482,6 +491,12 @@ public class Operation2Privilege {
     op2Priv.put(HiveOperationType.CREATE_TRIGGER, PrivRequirement.newIOPrivRequirement(null, null));
     op2Priv.put(HiveOperationType.ALTER_TRIGGER, PrivRequirement.newIOPrivRequirement(null, null));
     op2Priv.put(HiveOperationType.DROP_TRIGGER, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.CREATE_POOL, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.ALTER_POOL, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.DROP_POOL, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.CREATE_MAPPING, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.ALTER_MAPPING, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.DROP_MAPPING, PrivRequirement.newIOPrivRequirement(null, null));
   }
 
   /**

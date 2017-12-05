@@ -205,6 +205,7 @@ import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveReduceExpressionsWi
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveRelDecorrelator;
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveRelFieldTrimmer;
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveRemoveSqCountCheck;
+import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveRemoveGBYSemiJoinRule;
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveRulesRegistry;
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveSemiJoinRule;
 import org.apache.hadoop.hive.ql.optimizer.calcite.rules.HiveSortJoinReduceRule;
@@ -369,6 +370,7 @@ public class CalcitePlanner extends SemanticAnalyzer {
         disableJoinMerge = true;
         boolean reAnalyzeAST = false;
         final boolean materializedView = getQB().isMaterializedView();
+        final boolean rebuild = materializedView && createVwDesc.isReplace();
 
         try {
           if (this.conf.getBoolVar(HiveConf.ConfVars.HIVE_CBO_RETPATH_HIVEOP)) {
@@ -388,7 +390,10 @@ public class CalcitePlanner extends SemanticAnalyzer {
             ASTNode newAST = getOptimizedAST();
 
             // 1.1. Fix up the query for insert/ctas/materialized views
-            newAST = fixUpAfterCbo(ast, newAST, cboCtx);
+            if (!rebuild) {
+              // If it is not a MATERIALIZED VIEW...REBUILD
+              newAST = fixUpAfterCbo(ast, newAST, cboCtx);
+            }
 
             // 2. Regen OP plan from optimized AST
             if (cboCtx.type == PreCboCtx.Type.VIEW && !materializedView) {
@@ -398,25 +403,32 @@ public class CalcitePlanner extends SemanticAnalyzer {
                 throw new CalciteViewSemanticException(e.getMessage());
               }
             } else if (cboCtx.type == PreCboCtx.Type.VIEW && materializedView) {
-              // Store text of the ORIGINAL QUERY
-              String originalText = ctx.getTokenRewriteStream().toString(
-                  cboCtx.nodeOfInterest.getTokenStartIndex(),
-                  cboCtx.nodeOfInterest.getTokenStopIndex());
-              unparseTranslator.applyTranslations(ctx.getTokenRewriteStream());
-              String expandedText = ctx.getTokenRewriteStream().toString(
-                  cboCtx.nodeOfInterest.getTokenStartIndex(),
-                  cboCtx.nodeOfInterest.getTokenStopIndex());
-              // Redo create-table/view analysis, because it's not part of
-              // doPhase1.
-              // Use the REWRITTEN AST
-              init(false);
-              setAST(newAST);
-              newAST = reAnalyzeViewAfterCbo(newAST);
+              if (rebuild) {
+                // Use the CREATE MATERIALIZED VIEW...REBUILD
+                init(false);
+                setAST(ast);
+                reAnalyzeViewAfterCbo(ast);
+              } else {
+                // Store text of the ORIGINAL QUERY
+                String originalText = ctx.getTokenRewriteStream().toString(
+                    cboCtx.nodeOfInterest.getTokenStartIndex(),
+                    cboCtx.nodeOfInterest.getTokenStopIndex());
+                unparseTranslator.applyTranslations(ctx.getTokenRewriteStream());
+                String expandedText = ctx.getTokenRewriteStream().toString(
+                    cboCtx.nodeOfInterest.getTokenStartIndex(),
+                    cboCtx.nodeOfInterest.getTokenStopIndex());
+                // Redo create-table/view analysis, because it's not part of
+                // doPhase1.
+                // Use the REWRITTEN AST
+                init(false);
+                setAST(newAST);
+                newAST = reAnalyzeViewAfterCbo(newAST);
+                createVwDesc.setViewOriginalText(originalText);
+                createVwDesc.setViewExpandedText(expandedText);
+              }
               viewSelect = newAST;
               viewsExpanded = new ArrayList<>();
               viewsExpanded.add(createVwDesc.getViewName());
-              createVwDesc.setViewOriginalText(originalText);
-              createVwDesc.setViewExpandedText(expandedText);
             } else if (cboCtx.type == PreCboCtx.Type.CTAS) {
               // CTAS
               init(false);
@@ -1582,7 +1594,13 @@ public class CalcitePlanner extends SemanticAnalyzer {
         perfLogger.PerfLogEnd(this.getClass().getName(), PerfLogger.OPTIMIZER, "Calcite: Semijoin conversion");
       }
 
-      // 8. Get rid of sq_count_check if group by key is constant (HIVE-)
+      // 8. convert SemiJoin + GBy to SemiJoin
+        perfLogger.PerfLogBegin(this.getClass().getName(), PerfLogger.OPTIMIZER);
+        calciteOptimizedPlan = hepPlan(calciteOptimizedPlan, false, mdProvider.getMetadataProvider(), null,
+            HiveRemoveGBYSemiJoinRule.INSTANCE);
+        perfLogger.PerfLogEnd(this.getClass().getName(), PerfLogger.OPTIMIZER, "Calcite: Removal of gby from semijoin");
+
+      // 9. Get rid of sq_count_check if group by key is constant (HIVE-)
       if (conf.getBoolVar(ConfVars.HIVE_REMOVE_SQ_COUNT_CHECK)) {
         perfLogger.PerfLogBegin(this.getClass().getName(), PerfLogger.OPTIMIZER);
         calciteOptimizedPlan =
@@ -1592,7 +1610,7 @@ public class CalcitePlanner extends SemanticAnalyzer {
             "Calcite: Removing sq_count_check UDF ");
       }
 
-      // 9. Run rule to fix windowing issue when it is done over
+      // 10. Run rule to fix windowing issue when it is done over
       // aggregation columns (HIVE-10627)
       if (profilesCBO.contains(ExtendedCBOProfile.WINDOWING_POSTPROCESSING)) {
         perfLogger.PerfLogBegin(this.getClass().getName(), PerfLogger.OPTIMIZER);
@@ -1601,7 +1619,7 @@ public class CalcitePlanner extends SemanticAnalyzer {
         perfLogger.PerfLogEnd(this.getClass().getName(), PerfLogger.OPTIMIZER, "Calcite: Window fixing rule");
       }
 
-      // 10. Apply Druid transformation rules
+      // 11. Apply Druid transformation rules
       perfLogger.PerfLogBegin(this.getClass().getName(), PerfLogger.OPTIMIZER);
       calciteOptimizedPlan = hepPlan(calciteOptimizedPlan, false, mdProvider.getMetadataProvider(), null,
               HepMatchOrder.BOTTOM_UP,
@@ -1611,6 +1629,7 @@ public class CalcitePlanner extends SemanticAnalyzer {
               DruidRules.AGGREGATE_PROJECT,
               DruidRules.PROJECT,
               DruidRules.AGGREGATE,
+              DruidRules.POST_AGGREGATION_PROJECT,
               DruidRules.FILTER_AGGREGATE_TRANSPOSE,
               DruidRules.FILTER_PROJECT_TRANSPOSE,
               DruidRules.SORT_PROJECT_TRANSPOSE,
@@ -1619,10 +1638,10 @@ public class CalcitePlanner extends SemanticAnalyzer {
       );
       perfLogger.PerfLogEnd(this.getClass().getName(), PerfLogger.OPTIMIZER, "Calcite: Druid transformation rules");
 
-      // 11. Run rules to aid in translation from Calcite tree to Hive tree
+      // 12. Run rules to aid in translation from Calcite tree to Hive tree
       if (HiveConf.getBoolVar(conf, ConfVars.HIVE_CBO_RETPATH_HIVEOP)) {
         perfLogger.PerfLogBegin(this.getClass().getName(), PerfLogger.OPTIMIZER);
-        // 11.1. Merge join into multijoin operators (if possible)
+        // 12.1. Merge join into multijoin operators (if possible)
         calciteOptimizedPlan = hepPlan(calciteOptimizedPlan, true, mdProvider.getMetadataProvider(), null,
                 HepMatchOrder.BOTTOM_UP, HiveJoinProjectTransposeRule.BOTH_PROJECT_INCLUDE_OUTER,
                 HiveJoinProjectTransposeRule.LEFT_PROJECT_INCLUDE_OUTER,
@@ -1640,7 +1659,7 @@ public class CalcitePlanner extends SemanticAnalyzer {
                 HiveFilterProjectTSTransposeRule.INSTANCE, HiveFilterProjectTSTransposeRule.INSTANCE_DRUID,
                 HiveProjectFilterPullUpConstantsRule.INSTANCE);
 
-        // 11.2.  Introduce exchange operators below join/multijoin operators
+        // 12.2.  Introduce exchange operators below join/multijoin operators
         calciteOptimizedPlan = hepPlan(calciteOptimizedPlan, false, mdProvider.getMetadataProvider(), null,
                 HepMatchOrder.BOTTOM_UP, HiveInsertExchange4JoinRule.EXCHANGE_BELOW_JOIN,
                 HiveInsertExchange4JoinRule.EXCHANGE_BELOW_MULTIJOIN);

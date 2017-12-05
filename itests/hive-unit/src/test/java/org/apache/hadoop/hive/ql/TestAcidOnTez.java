@@ -49,6 +49,7 @@ import org.apache.hadoop.hive.ql.io.HiveInputFormat;
 import org.apache.hadoop.hive.ql.lockmgr.TestDbTxnManager2;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 import org.apache.hadoop.hive.ql.session.SessionState;
+import org.apache.tez.mapreduce.hadoop.MRJobConfig;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -106,6 +107,8 @@ public class TestAcidOnTez {
         .setVar(HiveConf.ConfVars.HIVE_AUTHORIZATION_MANAGER,
             "org.apache.hadoop.hive.ql.security.authorization.plugin.sqlstd.SQLStdHiveAuthorizerFactory");
     TxnDbUtil.setConfValues(hiveConf);
+    hiveConf.setInt(MRJobConfig.MAP_MEMORY_MB, 1024);
+    hiveConf.setInt(MRJobConfig.REDUCE_MEMORY_MB, 1024);
     TxnDbUtil.prepDb(hiveConf);
     File f = new File(TEST_WAREHOUSE_DIR);
     if (f.exists()) {
@@ -147,8 +150,8 @@ public class TestAcidOnTez {
     try {
       if (d != null) {
         dropTables();
-        d.destroy();
         d.close();
+        d.destroy();
         d = null;
       }
       TxnDbUtil.cleanDb(hiveConf);
@@ -782,8 +785,8 @@ ekoifman:apache-hive-3.0.0-SNAPSHOT-bin ekoifman$ tree  ~/dev/hiverwgit/itests/h
       ss.close();
     }
     if (d != null) {
-      d.destroy();
       d.close();
+      d.destroy();
     }
 
     SessionState.start(conf);

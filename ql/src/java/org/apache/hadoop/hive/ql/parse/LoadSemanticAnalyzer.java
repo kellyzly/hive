@@ -19,7 +19,6 @@
 package org.apache.hadoop.hive.ql.parse;
 
 import org.apache.hadoop.hive.conf.HiveConf.StrictChecks;
-
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
@@ -36,7 +35,6 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.TableType;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.ql.ErrorMsg;
@@ -50,11 +48,12 @@ import org.apache.hadoop.hive.ql.io.HiveFileFormatUtils;
 import org.apache.hadoop.hive.ql.metadata.Hive;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.metadata.Partition;
+import org.apache.hadoop.hive.ql.plan.StatsWork;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.plan.LoadTableDesc;
 import org.apache.hadoop.hive.ql.plan.LoadTableDesc.LoadFileType;
 import org.apache.hadoop.hive.ql.plan.MoveWork;
-import org.apache.hadoop.hive.ql.plan.StatsWork;
+import org.apache.hadoop.hive.ql.plan.BasicStatsWork;
 import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.mapred.InputFormat;
 
@@ -137,7 +136,7 @@ public class LoadSemanticAnalyzer extends BaseSemanticAnalyzer {
   }
 
   private List<FileStatus> applyConstraintsAndGetFiles(URI fromURI, Tree ast,
-      boolean isLocal) throws SemanticException {
+      boolean isLocal, Table table) throws SemanticException {
 
     FileStatus[] srcs = null;
 
@@ -159,6 +158,14 @@ public class LoadSemanticAnalyzer extends BaseSemanticAnalyzer {
         if (oneSrc.isDir()) {
           throw new SemanticException(ErrorMsg.INVALID_PATH.getMsg(ast,
               "source contains directory: " + oneSrc.getPath().toString()));
+        }
+        if(AcidUtils.isFullAcidTable(table)) {
+          if(!AcidUtils.originalBucketFilter.accept(oneSrc.getPath())) {
+            //acid files (e.g. bucket_0000) have ROW_ID embedded in them and so can't be simply
+            //copied to a table so only allow non-acid files for now
+            throw new SemanticException(ErrorMsg.ACID_LOAD_DATA_INVALID_FILE_NAME,
+              oneSrc.getPath().getName(), table.getDbName() + "." + table.getTableName());
+          }
         }
       }
     } catch (IOException e) {
@@ -225,15 +232,14 @@ public class LoadSemanticAnalyzer extends BaseSemanticAnalyzer {
     List<String> bucketCols = ts.tableHandle.getBucketCols();
     if (bucketCols != null && !bucketCols.isEmpty()) {
       String error = StrictChecks.checkBucketing(conf);
-      if (error != null) throw new SemanticException("Please load into an intermediate table"
-          + " and use 'insert... select' to allow Hive to enforce bucketing. " + error);
+      if (error != null) {
+        throw new SemanticException("Please load into an intermediate table"
+            + " and use 'insert... select' to allow Hive to enforce bucketing. " + error);
+      }
     }
 
-    if(AcidUtils.isAcidTable(ts.tableHandle) && !AcidUtils.isInsertOnlyTable(ts.tableHandle.getParameters())) {
-      throw new SemanticException(ErrorMsg.LOAD_DATA_ON_ACID_TABLE, ts.tableHandle.getCompleteName());
-    }
     // make sure the arguments make sense
-    List<FileStatus> files = applyConstraintsAndGetFiles(fromURI, fromTree, isLocal);
+    List<FileStatus> files = applyConstraintsAndGetFiles(fromURI, fromTree, isLocal, ts.tableHandle);
 
     // for managed tables, make sure the file formats match
     if (TableType.MANAGED_TABLE.equals(ts.tableHandle.getTableType())
@@ -276,17 +282,16 @@ public class LoadSemanticAnalyzer extends BaseSemanticAnalyzer {
     }
 
     Long txnId = null;
-    int stmtId = 0;
-    Table tbl = ts.tableHandle;
-    if (AcidUtils.isInsertOnlyTable(tbl.getParameters())) {
+    int stmtId = -1;
+    if (AcidUtils.isAcidTable(ts.tableHandle)) {
       txnId = SessionState.get().getTxnMgr().getCurrentTxnId();
+      stmtId = SessionState.get().getTxnMgr().getWriteIdAndIncrement();
     }
 
     LoadTableDesc loadTableWork;
     loadTableWork = new LoadTableDesc(new Path(fromURI),
       Utilities.getTableDesc(ts.tableHandle), partSpec,
       isOverWrite ? LoadFileType.REPLACE_ALL : LoadFileType.KEEP_EXISTING, txnId);
-    loadTableWork.setTxnId(txnId);
     loadTableWork.setStmtId(stmtId);
     if (preservePartitionSpecs){
       // Note : preservePartitionSpecs=true implies inheritTableSpecs=false but
@@ -313,11 +318,11 @@ public class LoadSemanticAnalyzer extends BaseSemanticAnalyzer {
     // Update the stats which do not require a complete scan.
     Task<? extends Serializable> statTask = null;
     if (conf.getBoolVar(HiveConf.ConfVars.HIVESTATSAUTOGATHER)) {
-      StatsWork statDesc = new StatsWork(loadTableWork);
-      statDesc.setNoStatsAggregator(true);
-      statDesc.setClearAggregatorStats(true);
-      statDesc.setStatsReliable(conf.getBoolVar(HiveConf.ConfVars.HIVE_STATS_RELIABLE));
-      statTask = TaskFactory.get(statDesc, conf);
+      BasicStatsWork basicStatsWork = new BasicStatsWork(loadTableWork);
+      basicStatsWork.setNoStatsAggregator(true);
+      basicStatsWork.setClearAggregatorStats(true);
+      StatsWork columnStatsWork = new StatsWork(ts.tableHandle, basicStatsWork, conf);
+      statTask = TaskFactory.get(columnStatsWork, conf);
     }
 
     // HIVE-3334 has been filed for load file with index auto update

@@ -19,7 +19,7 @@ package org.apache.hadoop.hive.ql;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.metastore.RunnableConfigurable;
+import org.apache.hadoop.hive.metastore.MetastoreTaskThread;
 import org.apache.hadoop.hive.metastore.api.GetOpenTxnsInfoResponse;
 import org.apache.hadoop.hive.metastore.api.LockState;
 import org.apache.hadoop.hive.metastore.api.LockType;
@@ -37,7 +37,6 @@ import org.apache.hadoop.hive.ql.io.BucketCodec;
 import org.apache.hadoop.hive.ql.lockmgr.TestDbTxnManager2;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -338,14 +337,14 @@ public class TestTxnCommands extends TxnCommandsBaseForTests {
     runStatementOnDriver("delete from " + Table.ACIDTBL + " where a = 5");
     //make sure currently running txn is considered aborted by housekeeper
     hiveConf.setTimeVar(HiveConf.ConfVars.HIVE_TXN_TIMEOUT, 2, TimeUnit.MILLISECONDS);
-    RunnableConfigurable houseKeeperService = new AcidHouseKeeperService();
+    MetastoreTaskThread houseKeeperService = new AcidHouseKeeperService();
     houseKeeperService.setConf(hiveConf);
     //this will abort the txn
     houseKeeperService.run();
     //this should fail because txn aborted due to timeout
     CommandProcessorResponse cpr = runStatementOnDriverNegative("delete from " + Table.ACIDTBL + " where a = 5");
     Assert.assertTrue("Actual: " + cpr.getErrorMessage(), cpr.getErrorMessage().contains("Transaction manager has aborted the transaction txnid:1"));
-    
+
     //now test that we don't timeout locks we should not
     //heartbeater should be running in the background every 1/2 second
     hiveConf.setTimeVar(HiveConf.ConfVars.HIVE_TXN_TIMEOUT, 1, TimeUnit.SECONDS);
@@ -355,9 +354,9 @@ public class TestTxnCommands extends TxnCommandsBaseForTests {
     runStatementOnDriver("start transaction");
     runStatementOnDriver("select count(*) from " + Table.ACIDTBL + " where a = 17");
     pause(750);
-    
+
     TxnStore txnHandler = TxnUtils.getTxnStore(hiveConf);
-    
+
     //since there is txn open, we are heartbeating the txn not individual locks
     GetOpenTxnsInfoResponse txnsInfoResponse = txnHandler.getOpenTxnsInfo();
     Assert.assertEquals(2, txnsInfoResponse.getOpen_txns().size());
@@ -378,7 +377,7 @@ public class TestTxnCommands extends TxnCommandsBaseForTests {
     //these 2 values are equal when TXN entry is made.  Should never be equal after 1st heartbeat, which we
     //expect to have happened by now since HIVE_TXN_TIMEOUT=1sec
     Assert.assertNotEquals("Didn't see heartbeat happen", Long.parseLong(vals[0]), lastHeartbeat);
-    
+
     ShowLocksResponse slr = txnHandler.showLocks(new ShowLocksRequest());
     TestDbTxnManager2.checkLock(LockType.SHARED_READ, LockState.ACQUIRED, "default", Table.ACIDTBL.name, null, slr.getLocks());
     pause(750);
@@ -526,7 +525,8 @@ public class TestTxnCommands extends TxnCommandsBaseForTests {
     String stmt = "merge into target t using (" + teeCurMatch + ") s on t.key=s.key and t.cur=1 and s.`o/p\\n`=1 " +
       "when matched then update set cur=0 " +
       "when not matched then insert values(s.key,s.data,1)";
-
+    //to allow cross join from 'teeCurMatch'
+    hiveConf.setBoolVar(HiveConf.ConfVars.HIVE_STRICT_CHECKS_CARTESIAN, false);
     runStatementOnDriver(stmt);
     int[][] resultVals = {{1,5,0},{1,7,1},{1,18,0},{2,6,1},{3,8,1}};
     List<String> r = runStatementOnDriver("select * from target order by key,data,cur");
@@ -570,7 +570,7 @@ public class TestTxnCommands extends TxnCommandsBaseForTests {
     List<String> r = runStatementOnDriver("select * from target order by key,data,cur");
     Assert.assertEquals(stringifyValues(resultVals), r);
   }
-  
+
   @Test
   public void testMergeOnTezEdges() throws Exception {
     String query = "merge into " + Table.ACIDTBL +

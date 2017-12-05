@@ -76,6 +76,7 @@ public enum HiveOperation {
   SHOWLOCKS("SHOWLOCKS", null, null, true, false),
   SHOWCONF("SHOWCONF", null, null),
   SHOWVIEWS("SHOWVIEWS", null, null, true, false),
+  SHOWMATERIALIZEDVIEWS("SHOWMATERIALIZEDVIEWS", null, null, true, false),
   CREATEFUNCTION("CREATEFUNCTION", null, null),
   DROPFUNCTION("DROPFUNCTION", null, null),
   RELOADFUNCTION("RELOADFUNCTION", null, null),
@@ -86,6 +87,8 @@ public enum HiveOperation {
       Privilege[]{Privilege.CREATE}),
   DROPVIEW("DROPVIEW", null, new Privilege[]{Privilege.DROP}),
   DROP_MATERIALIZED_VIEW("DROP_MATERIALIZED_VIEW", null, new Privilege[]{Privilege.DROP}),
+  ALTER_MATERIALIZED_VIEW_REWRITE("ALTER_MATERIALIZED_VIEW_REWRITE",
+      new Privilege[]{Privilege.ALTER_METADATA}, null),
   CREATEINDEX("CREATEINDEX", null, null),
   DROPINDEX("DROPINDEX", null, null),
   ALTERINDEX_REBUILD("ALTERINDEX_REBUILD", null, null),
@@ -146,7 +149,14 @@ public enum HiveOperation {
   DROP_RESOURCEPLAN("DROP RESOURCEPLAN", null, null, false, false),
   CREATE_TRIGGER("CREATE TRIGGER", null, null, false, false),
   ALTER_TRIGGER("ALTER TRIGGER", null, null, false, false),
-  DROP_TRIGGER("DROP TRIGGER", null, null, false, false);
+  DROP_TRIGGER("DROP TRIGGER", null, null, false, false),
+  CREATE_POOL("CREATE POOL", null, null, false, false),
+  ALTER_POOL("ALTER POOL", null, null, false, false),
+  DROP_POOL("DROP POOL", null, null, false, false),
+  CREATE_MAPPING("CREATE MAPPING", null, null, false, false),
+  ALTER_MAPPING("ALTER MAPPING", null, null, false, false),
+  DROP_MAPPING("DROP MAPPING", null, null, false, false);
+
 
   private String operationName;
 

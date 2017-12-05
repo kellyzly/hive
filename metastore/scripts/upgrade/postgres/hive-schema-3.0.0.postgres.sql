@@ -373,7 +373,7 @@ CREATE TABLE "TBLS" (
     "TBL_TYPE" character varying(128) DEFAULT NULL::character varying,
     "VIEW_EXPANDED_TEXT" text,
     "VIEW_ORIGINAL_TEXT" text,
-    "IS_REWRITE_ENABLED" boolean NOT NULL
+    "IS_REWRITE_ENABLED" boolean NOT NULL DEFAULT false
 );
 
 
@@ -623,15 +623,15 @@ CREATE TABLE "WM_RESOURCEPLAN" (
     "RP_ID" bigint NOT NULL,
     "NAME" character varying(128) NOT NULL,
     "QUERY_PARALLELISM" integer,
-    "STATUS" character varying(20) NOT NULL
+    "STATUS" character varying(20) NOT NULL,
+    "DEFAULT_POOL_ID" bigint
 );
 
 CREATE TABLE "WM_POOL" (
     "POOL_ID" bigint NOT NULL,
     "RP_ID" bigint NOT NULL,
     "PATH" character varying(1024) NOT NULL,
-    "PARENT_POOL_ID" bigint,
-    "ALLOC_FRACTION" DOUBLE,
+    "ALLOC_FRACTION" double precision,
     "QUERY_PARALLELISM" integer,
     "SCHEDULING_POLICY" character varying(1024)
 );
@@ -654,7 +654,7 @@ CREATE TABLE "WM_MAPPING" (
     "RP_ID" bigint NOT NULL,
     "ENTITY_TYPE" character varying(10) NOT NULL,
     "ENTITY_NAME" character varying(128) NOT NULL,
-    "POOL_ID" bigint NOT NULL,
+    "POOL_ID" bigint,
     "ORDERING" integer
 );
 
@@ -1543,6 +1543,9 @@ ALTER TABLE ONLY "FUNC_RU"
     ADD CONSTRAINT "FUNC_RU_FK1" FOREIGN KEY ("FUNC_ID") REFERENCES "FUNCS" ("FUNC_ID") DEFERRABLE;
 
 -- Resource plan FK constraints.
+
+ALTER TABLE ONLY "WM_RESOURCEPLAN"
+    ADD CONSTRAINT "WM_RESOURCEPLAN_FK1" FOREIGN KEY ("DEFAULT_POOL_ID") REFERENCES "WM_POOL" ("POOL_ID") DEFERRABLE;
 
 ALTER TABLE ONLY "WM_POOL"
     ADD CONSTRAINT "WM_POOL_FK1" FOREIGN KEY ("RP_ID") REFERENCES "WM_RESOURCEPLAN" ("RP_ID") DEFERRABLE;

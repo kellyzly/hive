@@ -28,8 +28,6 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.common.classification.RetrySemantics;
 import org.apache.hadoop.hive.metastore.DatabaseProduct;
-import org.apache.hadoop.hive.metastore.RunnableConfigurable;
-import org.apache.hadoop.hive.metastore.ThreadPool;
 import org.apache.hadoop.hive.metastore.Warehouse;
 import org.apache.hadoop.hive.metastore.datasource.BoneCPDataSourceProvider;
 import org.apache.hadoop.hive.metastore.datasource.DataSourceProvider;
@@ -59,7 +57,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -2520,7 +2517,7 @@ abstract class TxnHandler implements TxnStore, TxnStore.MutexAPI {
 
           String msg = "Aborting " + JavaUtils.txnIdToString(writeSet.get(0).txnId) +
             " since a concurrent committed transaction [" + JavaUtils.txnIdToString(rs.getLong(4)) + "," + rs.getLong(5) +
-            "] has already updated resouce '" + resourceName + "'";
+            "] has already updated resource '" + resourceName + "'";
           LOG.info(msg);
           if(abortTxns(dbConn, Collections.singletonList(writeSet.get(0).txnId), true) != 1) {
             throw new IllegalStateException(msg + " FAILED!");

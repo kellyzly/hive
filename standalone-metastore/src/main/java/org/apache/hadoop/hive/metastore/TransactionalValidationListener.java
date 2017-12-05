@@ -118,12 +118,22 @@ public final class TransactionalValidationListener extends MetaStorePreEventList
       }
     }
 
+    if (transactionalValuePresent && "false".equalsIgnoreCase(transactionalValue)) {
+      transactionalValuePresent = false;
+      transactionalValue = null;
+    }
+
     if (transactionalValuePresent) {
       //normalize prop name
       parameters.put(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL, transactionalValue);
     }
     if ("true".equalsIgnoreCase(transactionalValue) && !"true".equalsIgnoreCase(oldTransactionalValue)) {
-      //only need to check conformance if alter table enabled aicd
+      if(!isTransactionalPropertiesPresent) {
+        normazlieTransactionalPropertyDefault(newTable);
+        isTransactionalPropertiesPresent = true;
+        transactionalPropertiesValue = DEFAULT_TRANSACTIONAL_PROPERTY;
+      }
+      //only need to check conformance if alter table enabled acid
       if (!conformToAcid(newTable)) {
         // INSERT_ONLY tables don't have to conform to ACID requirement like ORC or bucketing
         if (transactionalPropertiesValue == null || !"insert_only".equalsIgnoreCase(transactionalPropertiesValue)) {
@@ -227,6 +237,9 @@ public final class TransactionalValidationListener extends MetaStorePreEventList
 
       // normalize prop name
       parameters.put(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL, Boolean.TRUE.toString());
+      if(transactionalProperties == null) {
+        normazlieTransactionalPropertyDefault(newTable);
+      }
       initializeTransactionalProperties(newTable);
       return;
     }
@@ -235,6 +248,16 @@ public final class TransactionalValidationListener extends MetaStorePreEventList
     throw new MetaException("'transactional' property of TBLPROPERTIES may only have value 'true'");
   }
 
+  /**
+   * When a table is marked transactional=true but transactional_properties is not set then
+   * transactional_properties should take on the default value.  Easier to make this explicit in
+   * table definition than keep checking everywhere if it's set or not.
+   */
+  private void normazlieTransactionalPropertyDefault(Table table) {
+    table.getParameters().put(hive_metastoreConstants.TABLE_TRANSACTIONAL_PROPERTIES,
+        DEFAULT_TRANSACTIONAL_PROPERTY);
+
+  }
   /**
    * Check that InputFormatClass/OutputFormatClass should implement
    * AcidInputFormat/AcidOutputFormat

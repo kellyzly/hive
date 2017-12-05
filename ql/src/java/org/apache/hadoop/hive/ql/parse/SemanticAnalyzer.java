@@ -1506,6 +1506,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
               String fullTableName = getUnescapedName((ASTNode) ast.getChild(0).getChild(0),
                   SessionState.get().getCurrentDatabase());
               qbp.getInsertOverwriteTables().put(fullTableName.toLowerCase(), ast);
+              qbp.setDestToOpType(ctx_1.dest, true);
             }
           }
         }
@@ -6781,7 +6782,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     Integer dest_type = qbm.getDestTypeForAlias(dest);
 
     Table dest_tab = null; // destination table if any
-    boolean destTableIsAcid = false; // should the destination table be written to using ACID
+    boolean destTableIsAcid = false;     // true for full ACID table and MM table
+    boolean destTableIsFullAcid = false; // should the destination table be written to using ACID
     boolean destTableIsTemporary = false;
     boolean destTableIsMaterialization = false;
     Partition dest_part = null;// destination partition if any
@@ -6802,7 +6804,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     case QBMetaData.DEST_TABLE: {
 
       dest_tab = qbm.getDestTableForAlias(dest);
-      destTableIsAcid = AcidUtils.isFullAcidTable(dest_tab);
+      destTableIsAcid = AcidUtils.isAcidTable(dest_tab);
+      destTableIsFullAcid = AcidUtils.isFullAcidTable(dest_tab);
       destTableIsTemporary = dest_tab.isTemporary();
 
       // Is the user trying to insert into a external tables
@@ -6824,7 +6827,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       if (isNonNativeTable || isMmTable) {
         queryTmpdir = dest_path;
       } else {
-        queryTmpdir = ctx.getTempDirForPath(dest_path, true);
+        queryTmpdir = ctx.getTempDirForFinalJobPath(dest_path);
       }
       if (Utilities.FILE_OP_LOGGER.isTraceEnabled()) {
         Utilities.FILE_OP_LOGGER.trace("create filesink w/DEST_TABLE specifying " + queryTmpdir
@@ -6852,7 +6855,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       // NOTE: specify Dynamic partitions in dest_tab for WriteEntity
       if (!isNonNativeTable) {
         AcidUtils.Operation acidOp = AcidUtils.Operation.NOT_ACID;
-        if (destTableIsAcid) {
+        if (destTableIsFullAcid) {
           acidOp = getAcidType(table_desc.getOutputFileFormatClass(), dest);
           checkAcidConstraints(qb, table_desc, dest_tab);
         }
@@ -6895,7 +6898,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
 
       dest_part = qbm.getDestPartitionForAlias(dest);
       dest_tab = dest_part.getTable();
-      destTableIsAcid = AcidUtils.isFullAcidTable(dest_tab);
+      destTableIsAcid = AcidUtils.isAcidTable(dest_tab);
+      destTableIsFullAcid = AcidUtils.isFullAcidTable(dest_tab);
 
       checkExternalTable(dest_tab);
 
@@ -6910,7 +6914,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
           .getAuthority(), partPath.toUri().getPath());
 
       isMmTable = AcidUtils.isInsertOnlyTable(dest_tab.getParameters());
-      queryTmpdir = isMmTable ? dest_path : ctx.getTempDirForPath(dest_path, true);
+      queryTmpdir = isMmTable ? dest_path : ctx.getTempDirForFinalJobPath(dest_path);
       if (Utilities.FILE_OP_LOGGER.isTraceEnabled()) {
         Utilities.FILE_OP_LOGGER.trace("create filesink w/DEST_PARTITION specifying "
             + queryTmpdir + " from " + dest_path);
@@ -6928,7 +6932,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
           dest_part.getSkewedColValues(), dest_part.getSkewedColValueLocationMaps(),
           dest_part.isStoredAsSubDirectories(), conf);
       AcidUtils.Operation acidOp = AcidUtils.Operation.NOT_ACID;
-      if (destTableIsAcid) {
+      if (destTableIsFullAcid) {
         acidOp = getAcidType(table_desc.getOutputFileFormatClass(), dest);
         checkAcidConstraints(qb, table_desc, dest_tab);
       }
@@ -6945,7 +6949,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       // For Acid table, Insert Overwrite shouldn't replace the table content. We keep the old
       // deltas and base and leave them up to the cleaner to clean up
       LoadFileType loadType = (!qb.getParseInfo().isInsertIntoTable(dest_tab.getDbName(),
-              dest_tab.getTableName()) && !destTableIsAcid)
+              dest_tab.getTableName()) && !destTableIsAcid) // // Both Full-acid and MM tables are excluded.
               ? LoadFileType.REPLACE_ALL : LoadFileType.KEEP_EXISTING;
       ltd.setLoadFileType(loadType);
       ltd.setLbCtx(lbCtx);
@@ -6997,7 +7001,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
         // no copy is required. we may want to revisit this policy in future
         try {
           Path qPath = FileUtils.makeQualified(dest_path, conf);
-          queryTmpdir = isMmTable ? qPath : ctx.getTempDirForPath(qPath, true);
+          queryTmpdir = isMmTable ? qPath : ctx.getTempDirForFinalJobPath(qPath);
           if (Utilities.FILE_OP_LOGGER.isTraceEnabled()) {
             Utilities.FILE_OP_LOGGER.trace("Setting query directory " + queryTmpdir
                   + " from " + dest_path + " (" + isMmTable + ")");
@@ -7019,6 +7023,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       }
 
       destTableIsAcid = tblDesc != null && AcidUtils.isAcidTable(tblDesc);
+      destTableIsFullAcid = tblDesc != null && AcidUtils.isFullAcidTable(tblDesc);
 
       boolean isDestTempFile = true;
       if (!ctx.isMRTmpFileURI(dest_path.toUri().toString())) {
@@ -7109,7 +7114,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
         (dest_tab.getSortCols() != null && dest_tab.getSortCols().size() > 0)));
 
     // If this table is working with ACID semantics, turn off merging
-    canBeMerged &= !destTableIsAcid;
+    canBeMerged &= !destTableIsFullAcid;
 
     // Generate the partition columns from the parent input
     if (dest_type.intValue() == QBMetaData.DEST_TABLE
@@ -7120,7 +7125,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     FileSinkDesc fileSinkDesc = createFileSinkDesc(dest, table_desc, dest_part,
         dest_path, currentTableId, destTableIsAcid, destTableIsTemporary,
         destTableIsMaterialization, queryTmpdir, rsCtx, dpCtx, lbCtx, fsRS,
-        canBeMerged, dest_tab, txnId, isMmCtas, dest_type);
+        canBeMerged, dest_tab, txnId, isMmCtas, dest_type, qb);
     if (isMmCtas) {
       // Add FSD so that the LoadTask compilation could fix up its path to avoid the move.
       tableDesc.setWriter(fileSinkDesc);
@@ -7150,7 +7155,9 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     // the following code is used to collect column stats when
     // hive.stats.autogather=true
     // and it is an insert overwrite or insert into table
-    if (dest_tab != null && conf.getBoolVar(ConfVars.HIVESTATSAUTOGATHER)
+    if (dest_tab != null
+        && !dest_tab.isNonNative()
+        && conf.getBoolVar(ConfVars.HIVESTATSAUTOGATHER)
         && conf.getBoolVar(ConfVars.HIVESTATSCOLAUTOGATHER)
         && ColumnStatsAutoGatherContext.canRunAutogatherStats(fso)) {
       if (dest_type.intValue() == QBMetaData.DEST_TABLE) {
@@ -7229,7 +7236,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       boolean destTableIsMaterialization, Path queryTmpdir,
       SortBucketRSCtx rsCtx, DynamicPartitionCtx dpCtx, ListBucketingCtx lbCtx,
       RowSchema fsRS, boolean canBeMerged, Table dest_tab, Long mmWriteId, boolean isMmCtas,
-      Integer dest_type) throws SemanticException {
+      Integer dest_type, QB qb) throws SemanticException {
     boolean isInsertOverwrite = false;
     switch (dest_type) {
       case QBMetaData.DEST_PARTITION:
@@ -7238,7 +7245,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
         //INSERT [OVERWRITE] path
         String destTableFullName = dest_tab.getCompleteName().replace('@', '.');
         Map<String, ASTNode> iowMap = qb.getParseInfo().getInsertOverwriteTables();
-        if (iowMap.containsKey(destTableFullName)) {
+        if (iowMap.containsKey(destTableFullName) && 
+          qb.getParseInfo().isDestToOpTypeInsertOverwrite(dest)) {
           isInsertOverwrite = true;
         }
         break;
@@ -7291,7 +7299,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     fileSinkDesc.setStatsAggPrefix(fileSinkDesc.getDirName().toString());
     if (!destTableIsMaterialization &&
             HiveConf.getVar(conf, HIVESTATSDBCLASS).equalsIgnoreCase(StatDB.fs.name())) {
-      String statsTmpLoc = ctx.getTempDirForPath(dest_path).toString();
+      String statsTmpLoc = ctx.getTempDirForInterimJobPath(dest_path).toString();
       fileSinkDesc.setStatsTmpDir(statsTmpLoc);
       LOG.debug("Set stats collection dir : " + statsTmpLoc);
     }
@@ -10655,14 +10663,11 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       throws SemanticException {
 
     // if it is not analyze command and not column stats, then do not gatherstats
-    // if it is column stats, but it is not tez, do not gatherstats
-    if ((!qbp.isAnalyzeCommand() && qbp.getAnalyzeRewrite() == null)
-        || (qbp.getAnalyzeRewrite() != null && !HiveConf.getVar(conf,
-            HiveConf.ConfVars.HIVE_EXECUTION_ENGINE).equals("tez"))) {
+    if (!qbp.isAnalyzeCommand() && qbp.getAnalyzeRewrite() == null) {
       tsDesc.setGatherStats(false);
     } else {
       if (HiveConf.getVar(conf, HIVESTATSDBCLASS).equalsIgnoreCase(StatDB.fs.name())) {
-        String statsTmpLoc = ctx.getTempDirForPath(tab.getPath()).toString();
+        String statsTmpLoc = ctx.getTempDirForInterimJobPath(tab.getPath()).toString();
         LOG.debug("Set stats collection dir : " + statsTmpLoc);
         tsDesc.setTmpStatsDir(statsTmpLoc);
       }
@@ -11366,6 +11371,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     // 3. analyze create view command
     if (ast.getToken().getType() == HiveParser.TOK_CREATEVIEW ||
         ast.getToken().getType() == HiveParser.TOK_CREATE_MATERIALIZED_VIEW ||
+        (ast.getToken().getType() == HiveParser.TOK_ALTER_MATERIALIZED_VIEW &&
+            ast.getChild(1).getType() == HiveParser.TOK_ALTER_MATERIALIZED_VIEW_REBUILD) ||
         (ast.getToken().getType() == HiveParser.TOK_ALTERVIEW &&
             ast.getChild(1).getType() == HiveParser.TOK_QUERY)) {
       child = analyzeCreateView(ast, qb, plannerCtx);
@@ -11751,6 +11758,11 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
   }
 
   protected void saveViewDefinition() throws SemanticException {
+    if (createVwDesc.isMaterialized() && createVwDesc.isReplace()) {
+      // This is a rebuild, there's nothing to do here.
+      return;
+    }
+
     // Make a copy of the statement's result schema, since we may
     // modify it below as part of imposing view column names.
     List<FieldSchema> derivedSchema =
@@ -12353,7 +12365,8 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
         comment = unescapeSQLString(child.getChild(0).getText());
         break;
       case HiveParser.TOK_TABLEPARTCOLS:
-        partCols = getColumns((ASTNode) child.getChild(0), false);
+        partCols = getColumns(child, false, primaryKeys, foreignKeys,
+            uniqueConstraints, notNullConstraints);
         break;
       case HiveParser.TOK_ALTERTABLE_BUCKETS:
         bucketCols = getColumnNames((ASTNode) child.getChild(0));
@@ -12594,6 +12607,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     Map<String, String> tblProps = null;
     List<String> partColNames = null;
     boolean isMaterialized = ast.getToken().getType() == HiveParser.TOK_CREATE_MATERIALIZED_VIEW;
+    boolean isRebuild = false;
     String location = null;
     RowFormatParams rowFormatParams = new RowFormatParams();
     StorageFormat storageFormat = new StorageFormat(conf);
@@ -12615,6 +12629,10 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
         break;
       case HiveParser.TOK_ORREPLACE:
         orReplace = true;
+        break;
+      case HiveParser.TOK_ALTER_MATERIALIZED_VIEW_REBUILD:
+        isMaterialized = true;
+        isRebuild = true;
         break;
       case HiveParser.TOK_QUERY:
         // For CBO
@@ -12673,7 +12691,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     if (isMaterialized) {
       createVwDesc = new CreateViewDesc(
           dbDotTable, cols, comment, tblProps, partColNames,
-          ifNotExists, orReplace, rewriteEnabled, isAlterViewAs,
+          ifNotExists, isRebuild, rewriteEnabled, isAlterViewAs,
           storageFormat.getInputFormat(), storageFormat.getOutputFormat(),
           location, storageFormat.getSerde(), storageFormat.getStorageHandler(),
           storageFormat.getSerdeProps());
@@ -12690,6 +12708,25 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       queryState.setCommandType(HiveOperation.CREATEVIEW);
     }
     qb.setViewDesc(createVwDesc);
+
+    if (isRebuild) {
+      // We need to go lookup the table and get the select statement and then parse it.
+      try {
+        Table tab = getTableObjectByName(dbDotTable, true);
+        String viewText = tab.getViewOriginalText();
+        if (viewText.trim().isEmpty()) {
+          throw new SemanticException(ErrorMsg.MATERIALIZED_VIEW_DEF_EMPTY);
+        }
+        Context ctx = new Context(queryState.getConf());
+        selectStmt = ParseUtils.parse(viewText, ctx);
+        // For CBO
+        if (plannerCtx != null) {
+          plannerCtx.setViewToken(selectStmt);
+        }
+      } catch (Exception e) {
+        throw new SemanticException(e);
+      }
+    }
 
     return selectStmt;
   }
@@ -12727,7 +12764,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       }
 
       //replace view
-      if (createVwDesc.getOrReplace() && oldView != null) {
+      if (createVwDesc.isReplace() && oldView != null) {
 
         // Don't allow swapping between virtual and materialized view in replace
         if (oldView.getTableType().equals(TableType.VIRTUAL_VIEW) && createVwDesc.isMaterialized()) {

@@ -423,6 +423,9 @@ public class VectorizationContext {
   public static final Pattern structTypePattern = Pattern.compile("struct.*",
       Pattern.CASE_INSENSITIVE);
 
+  public static final Pattern listTypePattern = Pattern.compile("array.*",
+      Pattern.CASE_INSENSITIVE);
+
   //Map column number to type
   private OutputColumnManager ocm;
 
@@ -694,6 +697,20 @@ public class VectorizationContext {
         break;
     }
     return expr;
+  }
+
+  public VectorExpression[] getVectorExpressionsUpConvertDecimal64(List<ExprNodeDesc> exprNodes)
+      throws HiveException {
+    VectorExpression[] vecExprs =
+        getVectorExpressions(exprNodes, VectorExpressionDescriptor.Mode.PROJECTION);
+    final int size = vecExprs.length;
+    for (int i = 0; i < size; i++) {
+      VectorExpression vecExpr = vecExprs[i];
+      if (vecExpr.getOutputColumnVectorType() == ColumnVector.Type.DECIMAL_64) {
+        vecExprs[i] = wrapWithDecimal64ToDecimalConversion(vecExpr);
+      }
+    }
+    return vecExprs;
   }
 
   public VectorExpression[] getVectorExpressions(List<ExprNodeDesc> exprNodes) throws HiveException {
@@ -2604,6 +2621,10 @@ public class VectorizationContext {
       return createVectorExpression(CastBooleanToStringViaLongToString.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isIntFamily(inputType)) {
       return createVectorExpression(CastLongToString.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("float")) {
+      return createVectorExpression(CastFloatToString.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("double")) {
+      return createVectorExpression(CastDoubleToString.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDecimalFamily(inputType)) {
       return createVectorExpression(CastDecimalToString.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDateFamily(inputType)) {
@@ -2628,6 +2649,10 @@ public class VectorizationContext {
       return createVectorExpression(CastBooleanToCharViaLongToChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isIntFamily(inputType)) {
       return createVectorExpression(CastLongToChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("float")) {
+      return createVectorExpression(CastFloatToChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("double")) {
+      return createVectorExpression(CastDoubleToChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDecimalFamily(inputType)) {
       return createVectorExpression(CastDecimalToChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDateFamily(inputType)) {
@@ -2652,6 +2677,10 @@ public class VectorizationContext {
       return createVectorExpression(CastBooleanToVarCharViaLongToVarChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isIntFamily(inputType)) {
       return createVectorExpression(CastLongToVarChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("float")) {
+      return createVectorExpression(CastFloatToVarChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
+    } else if (inputType.equals("double")) {
+      return createVectorExpression(CastDoubleToVarChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDecimalFamily(inputType)) {
       return createVectorExpression(CastDecimalToVarChar.class, childExpr, VectorExpressionDescriptor.Mode.PROJECTION, returnType);
     } else if (isDateFamily(inputType)) {
@@ -3284,6 +3313,8 @@ public class VectorizationContext {
       return hiveTypeName;
     case STRUCT:
       return "Struct";
+    case LIST:
+      return "List";
     default:
       throw new HiveException("Unexpected hive type name " + hiveTypeName);
     }

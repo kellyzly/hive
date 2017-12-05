@@ -102,7 +102,8 @@ STAGE PLANS:
           name: default.M1
 
   Stage: Stage-2
-    Stats-Aggr Operator
+    Stats Work
+      Basic Stats Work:
 
   Stage: Stage-3
     Map Reduce
@@ -194,7 +195,8 @@ STAGE PLANS:
           name: default.M1
 
   Stage: Stage-2
-    Stats-Aggr Operator
+    Stats Work
+      Basic Stats Work:
 
   Stage: Stage-3
     Map Reduce
@@ -288,7 +290,8 @@ STAGE PLANS:
           name: default.M1
 
   Stage: Stage-2
-    Stats-Aggr Operator
+    Stats Work
+      Basic Stats Work:
 
   Stage: Stage-3
     Map Reduce
@@ -380,7 +383,8 @@ STAGE PLANS:
           name: default.V1
 
   Stage: Stage-2
-    Stats-Aggr Operator
+    Stats Work
+      Basic Stats Work:
 
   Stage: Stage-3
     Map Reduce
@@ -423,12 +427,10 @@ STAGE PLANS:
   Stage: Stage-1
       Create View Operator:
         Create View
-          or replace: false
           columns: key string, value string
           expanded text: select `m1`.`key`, `m1`.`value` from `default`.`M1`
           name: default.V1
           original text: select * from M1
-          rewrite enabled: false
 
 PREHOOK: query: EXPLAIN CREATE TABLE M1 LIKE src
 PREHOOK: type: CREATETABLE
@@ -540,7 +542,8 @@ STAGE PLANS:
               name: default.m1
 
   Stage: Stage-2
-    Stats-Aggr Operator
+    Stats Work
+      Basic Stats Work:
 
   Stage: Stage-3
     Map Reduce

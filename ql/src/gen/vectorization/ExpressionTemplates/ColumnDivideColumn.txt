@@ -25,7 +25,7 @@ import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.hadoop.hive.ql.exec.vector.VectorExpressionDescriptor;
 
 /**
- * Generated from template ColumnArithmeticColumn.txt, which covers binary arithmetic
+ * Generated from template ColumnDivideColumn.txt, which covers division and modulo
  * expressions between columns.
  */
 public class <ClassName> extends VectorExpression {

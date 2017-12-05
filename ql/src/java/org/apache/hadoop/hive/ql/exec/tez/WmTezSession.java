@@ -18,28 +18,31 @@
 
 package org.apache.hadoop.hive.ql.exec.tez;
 
-import com.google.common.util.concurrent.ListenableFuture;
-
-import org.apache.hadoop.hive.ql.exec.Utilities;
-
 import com.google.common.annotations.VisibleForTesting;
-
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.registry.impl.TezAmInstance;
+import org.apache.hive.common.util.Ref;
 
 public class WmTezSession extends TezSessionPoolSession implements AmPluginNode {
   private String poolName;
   private double clusterFraction;
+  /**
+   * The reason to kill an AM. Note that this is for the entire session, not just for a query.
+   * Once set, this can never be unset because you can only kill the session once.
+   */
   private String killReason = null;
 
   private final Object amPluginInfoLock = new Object();
   private AmPluginInfo amPluginInfo = null;
+  private Integer amPluginendpointVersion =  null;
   private SettableFuture<WmTezSession> amRegistryFuture = null;
   private ScheduledFuture<?> timeoutTimer = null;
+  private String queryId;
 
   private final WorkloadManager wmParent;
 
@@ -90,25 +93,39 @@ public class WmTezSession extends TezSessionPoolSession implements AmPluginNode 
 
 
   @Override
-  void updateFromRegistry(TezAmInstance si) {
-    AmPluginInfo info = new AmPluginInfo(si.getHost(), si.getPluginPort(),
+  void updateFromRegistry(TezAmInstance si, int ephSeqVersion) {
+    AmPluginInfo info = si == null ? null : new AmPluginInfo(si.getHost(), si.getPluginPort(),
         si.getPluginToken(), si.getPluginTokenJobId());
     synchronized (amPluginInfoLock) {
-      this.amPluginInfo = info;
-      if (amRegistryFuture != null) {
-        amRegistryFuture.set(this);
-        amRegistryFuture = null;
+      // Ignore the outdated updates; for the same version, ignore non-null updates because
+      // we assume that removal is the last thing that happens for any given version.
+      if ((amPluginendpointVersion != null) && ((amPluginendpointVersion > ephSeqVersion)
+          || (amPluginendpointVersion == ephSeqVersion && info != null))) {
+        LOG.info("Ignoring an outdated info update {}: {}", ephSeqVersion, si);
+        return;
       }
-      if (timeoutTimer != null) {
-        timeoutTimer.cancel(true);
-        timeoutTimer = null;
+      this.amPluginendpointVersion = ephSeqVersion;
+      this.amPluginInfo = info;
+      if (info != null) {
+        // Only update someone waiting for info if we have the info.
+        if (amRegistryFuture != null) {
+          amRegistryFuture.set(this);
+          amRegistryFuture = null;
+        }
+        if (timeoutTimer != null) {
+          timeoutTimer.cancel(true);
+          timeoutTimer = null;
+        }
       }
     }
   }
 
   @Override
-  public AmPluginInfo getAmPluginInfo() {
-    return amPluginInfo; // Only has final fields, no artifacts from the absence of sync.
+  public AmPluginInfo getAmPluginInfo(Ref<Integer> version) {
+    synchronized (amPluginInfoLock) {
+      version.value = amPluginendpointVersion;
+      return amPluginInfo;
+    }
   }
 
   void setPoolName(String poolName) {
@@ -143,6 +160,13 @@ public class WmTezSession extends TezSessionPoolSession implements AmPluginNode 
     }
   }
 
+  public String getAllocationState() {
+    synchronized (actualState) {
+      return "actual/target " + actualState.sent + "/" + actualState.target
+          + (actualState.sending >= 0 ? "; sending" : "");
+    }
+  }
+
   int setSentGuaranteed() {
     // Only one send can be active at the same time.
     synchronized (actualState) {
@@ -162,8 +186,8 @@ public class WmTezSession extends TezSessionPoolSession implements AmPluginNode 
     }
   }
 
-  public void handleUpdateError() {
-    wmParent.addUpdateError(this);
+  public void handleUpdateError(int endpointVersion) {
+    wmParent.addUpdateError(this, endpointVersion);
   }
 
   @Override
@@ -185,6 +209,9 @@ public class WmTezSession extends TezSessionPoolSession implements AmPluginNode 
   }
 
   void setIsIrrelevantForWm(String killReason) {
+    if (killReason == null) {
+      throw new AssertionError("Cannot reset the kill reason " + this.killReason);
+    }
     this.killReason = killReason;
   }
 
@@ -199,4 +226,19 @@ public class WmTezSession extends TezSessionPoolSession implements AmPluginNode 
       }
     }
   }
+
+  public void setQueryId(String queryId) {
+    this.queryId = queryId;
+  }
+
+  public String getQueryId() {
+    return this.queryId;
+  }
+
+  @Override
+  public String toString() {
+    return super.toString() +  ", WM state poolName=" + poolName + ", clusterFraction="
+        + clusterFraction + ", queryId=" + queryId + ", killReason=" + killReason;
+  }
+
 }
