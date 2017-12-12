@@ -80,10 +80,10 @@ public class MapOperator extends AbstractMapOperator {
 
   // input path --> {operator --> context}
   private final Map<String, Map<Operator<?>, MapOpCtx>> opCtxMap =
-      new HashMap<String, Map<Operator<?>, MapOpCtx>>();
+    new HashMap<String, Map<Operator<?>, MapOpCtx>>();
   // child operator --> object inspector (converted OI if it's needed)
   private final Map<Operator<?>, StructObjectInspector> childrenOpToOI =
-      new HashMap<Operator<?>, StructObjectInspector>();
+    new HashMap<Operator<?>, StructObjectInspector>();
 
   // context for current input file
   protected transient MapOpCtx[] currentCtxs;
@@ -168,7 +168,7 @@ public class MapOperator extends AbstractMapOperator {
   }
 
   private MapOpCtx initObjectInspector(Configuration hconf, MapOpCtx opCtx,
-      StructObjectInspector tableRowOI) throws Exception {
+                                       StructObjectInspector tableRowOI) throws Exception {
     PartitionDesc pd = opCtx.partDesc;
     TableDesc td = pd.getTableDesc();
 
@@ -176,7 +176,7 @@ public class MapOperator extends AbstractMapOperator {
     // and the union of table properties and partition properties, with partition
     // taking precedence, in the case of partitioned tables
     Properties overlayedProps =
-        SerDeUtils.createOverlayedProperties(td.getProperties(), pd.getProperties());
+      SerDeUtils.createOverlayedProperties(td.getProperties(), pd.getProperties());
 
     Map<String, String> partSpec = pd.getPartSpec();
     opCtx.tableName = String.valueOf(overlayedProps.getProperty("name"));
@@ -189,11 +189,11 @@ public class MapOperator extends AbstractMapOperator {
       partRawRowObjectInspector = tableRowOI;
     } else {
       partRawRowObjectInspector =
-          (StructObjectInspector) opCtx.deserializer.getObjectInspector();
+        (StructObjectInspector) opCtx.deserializer.getObjectInspector();
     }
 
     opCtx.partTblObjectInspectorConverter =
-        ObjectInspectorConverters.getConverter(partRawRowObjectInspector, tableRowOI);
+      ObjectInspectorConverters.getConverter(partRawRowObjectInspector, tableRowOI);
 
     // Next check if this table has partitions and if so
     // get the list of partition names as well as allocate
@@ -203,12 +203,12 @@ public class MapOperator extends AbstractMapOperator {
     if (pcols != null && pcols.length() > 0) {
       String[] partKeys = pcols.trim().split("/");
       String pcolTypes = overlayedProps
-          .getProperty(hive_metastoreConstants.META_TABLE_PARTITION_COLUMN_TYPES);
+        .getProperty(hive_metastoreConstants.META_TABLE_PARTITION_COLUMN_TYPES);
       String[] partKeyTypes = pcolTypes.trim().split(":");
 
       if (partKeys.length > partKeyTypes.length) {
-          throw new HiveException("Internal error : partKeys length, " +partKeys.length +
-                  " greater than partKeyTypes length, " + partKeyTypes.length);
+        throw new HiveException("Internal error : partKeys length, " +partKeys.length +
+          " greater than partKeyTypes length, " + partKeyTypes.length);
       }
 
       List<String> partNames = new ArrayList<String>(partKeys.length);
@@ -219,23 +219,23 @@ public class MapOperator extends AbstractMapOperator {
         String key = partKeys[i];
         partNames.add(key);
         ObjectInspector oi = PrimitiveObjectInspectorFactory.getPrimitiveWritableObjectInspector
-            (TypeInfoFactory.getPrimitiveTypeInfo(partKeyTypes[i]));
+          (TypeInfoFactory.getPrimitiveTypeInfo(partKeyTypes[i]));
 
         // Partitions do not exist for this table
         if (partSpec == null) {
           // for partitionless table, initialize partValue to null
           partValues[i] = null;
         } else {
-            partValues[i] =
-                ObjectInspectorConverters.
-                getConverter(PrimitiveObjectInspectorFactory.
-                    javaStringObjectInspector, oi).convert(partSpec.get(key));
+          partValues[i] =
+            ObjectInspectorConverters.
+              getConverter(PrimitiveObjectInspectorFactory.
+                javaStringObjectInspector, oi).convert(partSpec.get(key));
         }
         partObjectInspectors.add(oi);
       }
       opCtx.rowWithPart = new Object[] {null, partValues};
       opCtx.partObjectInspector = ObjectInspectorFactory
-          .getStandardStructObjectInspector(partNames, partObjectInspectors);
+        .getStandardStructObjectInspector(partNames, partObjectInspectors);
     }
 
     // The op may not be a TableScan for mapjoins
@@ -280,9 +280,9 @@ public class MapOperator extends AbstractMapOperator {
    * might be needed for both P1 and P2, since SettableOI might be needed for T
    */
   private Map<TableDesc, StructObjectInspector> getConvertedOI(Map<String, Configuration> tableToConf)
-      throws HiveException {
+    throws HiveException {
     Map<TableDesc, StructObjectInspector> tableDescOI =
-        new HashMap<TableDesc, StructObjectInspector>();
+      new HashMap<TableDesc, StructObjectInspector>();
     Set<TableDesc> identityConverterTableDesc = new HashSet<TableDesc>();
 
     try {
@@ -300,17 +300,17 @@ public class MapOperator extends AbstractMapOperator {
           partRawRowObjectInspector = (StructObjectInspector) tblDeserializer.getObjectInspector();
         } else {
           partRawRowObjectInspector =
-              (StructObjectInspector) partDeserializer.getObjectInspector();
+            (StructObjectInspector) partDeserializer.getObjectInspector();
         }
 
         StructObjectInspector tblRawRowObjectInspector = tableDescOI.get(tableDesc);
         if ((tblRawRowObjectInspector == null) ||
-            (identityConverterTableDesc.contains(tableDesc))) {
+          (identityConverterTableDesc.contains(tableDesc))) {
           Deserializer tblDeserializer = tableDesc.getDeserializer(hconf);
           tblRawRowObjectInspector =
-              (StructObjectInspector) ObjectInspectorConverters.getConvertedOI(
-                  partRawRowObjectInspector,
-                  tblDeserializer.getObjectInspector(), oiSettableProperties);
+            (StructObjectInspector) ObjectInspectorConverters.getConvertedOI(
+              partRawRowObjectInspector,
+              tblDeserializer.getObjectInspector(), oiSettableProperties);
 
           if (identityConverterTableDesc.contains(tableDesc)) {
             if (!partRawRowObjectInspector.equals(tblRawRowObjectInspector)) {
@@ -417,12 +417,11 @@ public class MapOperator extends AbstractMapOperator {
   public void setChildren(Configuration hconf) throws Exception {
 
     List<Operator<? extends OperatorDesc>> children =
-        new ArrayList<Operator<? extends OperatorDesc>>();
+      new ArrayList<Operator<? extends OperatorDesc>>();
 
     Map<String, Configuration> tableNameToConf = cloneConfsForNestedColPruning(hconf);
     Map<TableDesc, StructObjectInspector> convertedOI = getConvertedOI(tableNameToConf);
 
-    if( conf.getPathToAliases().size() >0 ){
     for (Map.Entry<Path, ArrayList<String>> entry : conf.getPathToAliases().entrySet()) {
       Path onefile = entry.getKey();
       List<String> aliases = entry.getValue();
@@ -431,11 +430,8 @@ public class MapOperator extends AbstractMapOperator {
       Configuration newConf = tableNameToConf.get(tableDesc.getTableName());
 
       for (String alias : aliases) {
-        Operator<? extends OperatorDesc> op = conf.getAliasToWork().get(alias);
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Adding alias " + alias + " to work list for file "
-              + onefile);
-        }
+        Operator<? extends OperatorDesc> op = getRootOfMapWork(alias);
+        if (LOG.isDebugEnabled())
         Map<Operator<?>, MapOpCtx> contexts = opCtxMap.get(onefile.toString());
         if (contexts == null) {
           opCtxMap.put(onefile.toString(), contexts = new LinkedHashMap<Operator<?>, MapOpCtx>());
@@ -453,8 +449,7 @@ public class MapOperator extends AbstractMapOperator {
           children.add(op);
         }
       }
-    }}
-
+    }
 
     initOperatorContext(children);
 
@@ -462,15 +457,19 @@ public class MapOperator extends AbstractMapOperator {
     setChildOperators(children);
   }
 
+  protected Operator getRootOfMapWork(String alias){
+    return conf.getAliasToWork().get(alias);
+  }
+
   private void initOperatorContext(List<Operator<? extends OperatorDesc>> children)
-      throws HiveException {
+    throws HiveException {
     for (Map<Operator<?>, MapOpCtx> contexts : opCtxMap.values()) {
       for (MapOpCtx context : contexts.values()) {
         if (!children.contains(context.op)) {
           continue;
         }
         StructObjectInspector prev =
-            childrenOpToOI.put(context.op, context.rowObjectInspector);
+          childrenOpToOI.put(context.op, context.rowObjectInspector);
         if (prev != null && !prev.equals(context.rowObjectInspector)) {
           throw new HiveException("Conflict on row inspector for " + context.alias);
         }
@@ -540,33 +539,31 @@ public class MapOperator extends AbstractMapOperator {
     // A mapper can span multiple files/partitions.
     // The serializers need to be reset if the input file changed
     ExecMapperContext context = getExecContext();
-    if (context != null && context.inputFileChanged() && !context.isSkipCleanUpInputFileChanged()) {
+    if (context != null && context.inputFileChanged()) {
       // The child operators cleanup if input file has changed
       cleanUpInputFileChanged();
     }
     int childrenDone = 0;
-    if (currentCtxs != null) {
-      for (MapOpCtx current : currentCtxs) {
-        Object row = null;
-        try {
-          row = current.readRow(value, context);
-          if (!current.forward(row)) {
-            childrenDone++;
-          }
-        } catch (Exception e) {
-          // TODO: policy on deserialization errors
-          String message = null;
-          try {
-            message = toErrorMessage(value, row, current.rowObjectInspector);
-          } catch (Throwable t) {
-            message = "[" + row + ", " + value + "]: cannot get error message " + t.getMessage();
-          }
-          if (row == null) {
-            deserialize_error_count.set(deserialize_error_count.get() + 1);
-            throw new HiveException("Hive Runtime Error while processing writable " + message, e);
-          }
-          throw new HiveException("Hive Runtime Error while processing row " + message, e);
+    for (MapOpCtx current : currentCtxs) {
+      Object row = null;
+      try {
+        row = current.readRow(value, context);
+        if (!current.forward(row)) {
+          childrenDone++;
         }
+      } catch (Exception e) {
+        // TODO: policy on deserialization errors
+        String message = null;
+        try {
+          message = toErrorMessage(value, row, current.rowObjectInspector);
+        } catch (Throwable t) {
+          message = "[" + row + ", " + value + "]: cannot get error message " + t.getMessage();
+        }
+        if (row == null) {
+          deserialize_error_count.set(deserialize_error_count.get() + 1);
+          throw new HiveException("Hive Runtime Error while processing writable " + message, e);
+        }
+        throw new HiveException("Hive Runtime Error while processing row " + message, e);
       }
     }
     rowsForwarded(childrenDone, 1);
@@ -584,11 +581,7 @@ public class MapOperator extends AbstractMapOperator {
         LOG.info(toString() + ": records read - " + numRows);
       }
     }
-    if (currentCtxs != null) {
-      if (childrenDone == currentCtxs.length) {
-        setDone(true);
-      }
-    } else {
+    if (childrenDone == currentCtxs.length) {
       setDone(true);
     }
   }
@@ -605,7 +598,7 @@ public class MapOperator extends AbstractMapOperator {
   }
 
   public static Object[] populateVirtualColumnValues(ExecMapperContext ctx,
-      List<VirtualColumn> vcs, Object[] vcValues, Deserializer deserializer) {
+                                                     List<VirtualColumn> vcs, Object[] vcValues, Deserializer deserializer) {
     if (vcs == null) {
       return vcValues;
     }
@@ -673,7 +666,7 @@ public class MapOperator extends AbstractMapOperator {
             ctx.getIoCxt().setRecordIdentifier(null);//so we don't accidentally cache the value; shouldn't
             //happen since IO layer either knows how to produce ROW__ID or not - but to be safe
           }
-	  break;
+          break;
       }
     }
     return vcValues;

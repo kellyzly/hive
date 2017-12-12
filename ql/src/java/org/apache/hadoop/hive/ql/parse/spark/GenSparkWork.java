@@ -128,6 +128,7 @@ public class GenSparkWork implements NodeProcessor {
         } else {
           //save work to be initialized later with SMB information.
           work = utils.createMapWork(context, root, sparkWork, null, true);
+
           context.smbMapJoinCtxMap.get(smbOp).mapWork = (MapWork) work;
         }
       } else {
@@ -135,6 +136,11 @@ public class GenSparkWork implements NodeProcessor {
         if(context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) && !hasSeperateTS ){
           work = utils.createMapWork(context,root, sparkWork, null);
           MapWork mapWork = (MapWork)work;
+          MapWork preceedingMapWork =(MapWork)context.preceedingWork;
+          //use the pathToAlias of preceeingMapWork( the first M of M-M-R) to initialize the second M
+          mapWork.setPathToAliases(preceedingMapWork.getPathToAliases());
+          //use the PathToPartitionInfo of preceeingMapWork( the first M of M-M-R) to initialize the second M
+          mapWork.setPathToPartitionInfo(preceedingMapWork.getPathToPartitionInfo());
           //If context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)==true,
           //use root(the child of TS)'s operatorId as the alias
           mapWork.getAliasToWork().put(root.getOperatorId(), root);

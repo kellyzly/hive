@@ -98,10 +98,11 @@ public class SparkMapRecordHandler extends SparkRecordHandler {
         Preconditions.checkArgument(mrwork.getAllRootOperators().size() == 1,
             "AssertionError: expected root.getParentOperators() to be empty");
         Operator rootOp = mrwork.getAllRootOperators().iterator().next();
-        sparkMo.setChildrenFromRoot(rootOp);
-      }else {
-        mo.setChildren(job);
+        sparkMo.setRoootOfMapWork(rootOp);
       }
+
+      mo.setChildren(job);
+
       LOG.info(mo.dump(0));
       // initialize map local work
       localWork = mrwork.getMapRedLocalWork();

@@ -45,7 +45,7 @@ public class SparkMapOperator2 extends MapOperator {
 //  mo.passExecContext(execContext);
 //  mo.initializeLocalWork(jc);
 //  mo.initializeMapOperator(jc);
-
+  private Operator root = null;
   private Map<Operator<?>, MapOpCtx> opCtxMap =
       new HashMap<Operator<?>, MapOpCtx>();
   // child operator --> object inspector (converted OI if it's needed)
@@ -58,38 +58,42 @@ public class SparkMapOperator2 extends MapOperator {
   public void initEmptyInputChildren(List<Operator<?>> children, Configuration hconf) throws SerDeException, Exception {
 
   }
+  protected Operator getRootOfMapWork(String alias){
+    return root;
+  }
 
-
-  public void setChildrenFromRoot(Operator root) throws Exception {
+  public void setRoootOfMapWork(Operator root) throws Exception {
+    this.root = root;
+  }
     //How to get the children ,before How does MapOeprator do?
     // org.apache.hadoop.hive.ql.plan.MapWork.getPathToAliases() to get
+//
+//    //org.apache.hadoop.hive.ql.exec.MapOperator.opCtxMap's function: seems no big function just to initialize MapOperator#currentCtxs
+//    List<Operator<? extends OperatorDesc>> children = new ArrayList<>();
+//    children.add(root);
+//    initOperatorContext(children);
+//
+//    // we found all the operators that we are supposed to process.
+//    setChildOperators(children);
+// }
 
-    //org.apache.hadoop.hive.ql.exec.MapOperator.opCtxMap's function: seems no big function just to initialize MapOperator#currentCtxs
-    List<Operator<? extends OperatorDesc>> children = new ArrayList<>();
-    children.add(root);
-    initOperatorContext(children);
-
-    // we found all the operators that we are supposed to process.
-    setChildOperators(children);
-  }
-
-  private void initOperatorContext(List<Operator<? extends OperatorDesc>> children)
-      throws HiveException {
-    //TODO where is opCtxMap initilization
-      for (MapOpCtx context : opCtxMap.values()) {
-        if (!children.contains(context.op)) {
-          continue;
-        }
-        StructObjectInspector prev =
-            childrenOpToOI.put(context.op, context.rowObjectInspector);
-        if (prev != null && !prev.equals(context.rowObjectInspector)) {
-          throw new HiveException("Conflict on row inspector for " + context.alias);
-        }
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("dump " + context.op + " " + context.rowObjectInspector.getTypeName());
-        }
-      }
-  }
+//  private void initOperatorContext(List<Operator<? extends OperatorDesc>> children)
+//      throws HiveException {
+//    //TODO where is opCtxMap initilization
+//      for (MapOpCtx context : opCtxMap.values()) {
+//        if (!children.contains(context.op)) {
+//          continue;
+//        }
+//        StructObjectInspector prev =
+//            childrenOpToOI.put(context.op, context.rowObjectInspector);
+//        if (prev != null && !prev.equals(context.rowObjectInspector)) {
+//          throw new HiveException("Conflict on row inspector for " + context.alias);
+//        }
+//        if (LOG.isDebugEnabled()) {
+//          LOG.debug("dump " + context.op + " " + context.rowObjectInspector.getTypeName());
+//        }
+//      }
+//  }
 
 
   @Override
