@@ -420,14 +420,19 @@ public class SparkCompiler extends TaskCompiler {
 
   private void generateTaskTreeHelper(GenSparkProcContext procCtx, List<Node> topNodes)
     throws SemanticException {
+
+    //create a walker which walks the tree in a DFS manner to split the operator tree from M to M->M
+    GenSparkWork genSparkWork = new GenSparkWork(GenSparkUtils.getUtils());
+    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+      Map<Rule, NodeProcessor> splitMMRRules = new LinkedHashMap<Rule, NodeProcessor>();
+      splitMMRRules.put(new RuleRegExp("Split work -TableScan",TableScanOperator.getOperatorName()+"%"),genSparkWork);
+      Dispatcher disp = new DefaultRuleDispatcher(null, splitMMRRules, procCtx);
+      GraphWalker ogw = new GenSparkWorkWalker(disp, procCtx);
+      ogw.startWalking(topNodes, null);
+    }
     // create a walker which walks the tree in a DFS manner while maintaining
     // the operator stack. The dispatcher generates the plan from the operator tree
-    Multimap<Rule, NodeProcessor> opRules = LinkedListMultimap.create();
-    GenSparkWork genSparkWork = new GenSparkWork(GenSparkUtils.getUtils());
-
-    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
-      opRules.put(new RuleRegExp("Split work -TableScan",TableScanOperator.getOperatorName()+"%"),genSparkWork);
-    }
+    Map<Rule, NodeProcessor> opRules = new LinkedHashMap<Rule, NodeProcessor>();
 
     opRules.put(new RuleRegExp("Split Work - ReduceSink",
         ReduceSinkOperator.getOperatorName() + "%"), genSparkWork);
@@ -503,7 +508,7 @@ public class SparkCompiler extends TaskCompiler {
 
     // The dispatcher fires the processor corresponding to the closest matching
     // rule and passes the context along
-    Dispatcher disp = new SparkRuleDispatcher(null, opRules, procCtx);
+    Dispatcher disp = new DefaultRuleDispatcher(null, opRules, procCtx);
     GraphWalker ogw = new GenSparkWorkWalker(disp, procCtx);
     ogw.startWalking(topNodes, null);
   }
