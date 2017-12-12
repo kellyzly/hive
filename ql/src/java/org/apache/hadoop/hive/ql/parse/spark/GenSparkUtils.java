@@ -155,15 +155,19 @@ public class GenSparkUtils {
 
   public MapWork createMapWork(GenSparkProcContext context, Operator<?> root,
       SparkWork sparkWork, PrunedPartitionList partitions, boolean deferSetup) throws SemanticException {
-    Preconditions.checkArgument(root.getParentOperators().isEmpty(),
-        "AssertionError: expected root.getParentOperators() to be empty");
+    if( !context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) ) {
+      Preconditions.checkArgument(root.getParentOperators().isEmpty(),
+          "AssertionError: expected root.getParentOperators() to be empty");
+    }
     MapWork mapWork = new MapWork("Map " + (++sequenceNumber));
     LOG.debug("Adding map work (" + mapWork.getName() + ") for " + root);
 
     // map work starts with table scan operators
-    Preconditions.checkArgument(root instanceof TableScanOperator,
-      "AssertionError: expected root to be an instance of TableScanOperator, but was "
-      + root.getClass().getName());
+    if( !context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION) ) {
+      Preconditions.checkArgument(root instanceof TableScanOperator,
+          "AssertionError: expected root to be an instance of TableScanOperator, but was "
+              + root.getClass().getName());
+    }
     String alias_id = null;
     if (context.parseContext != null && context.parseContext.getTopOps() != null) {
       for (String currentAliasID : context.parseContext.getTopOps().keySet()) {
@@ -175,9 +179,17 @@ public class GenSparkUtils {
       }
     }
     if (alias_id == null)
-      alias_id = ((TableScanOperator) root).getConf().getAlias();
+      if( root instanceof TableScanOperator ) {
+        alias_id = ((TableScanOperator) root).getConf().getAlias();
+      }else {
+        //If context.conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)==true,
+        //the operator tree which starts from the children of TS maybe a Map, HIVE-17486
+        alias_id = root.getOperatorId();
+      }
     if (!deferSetup) {
-      setupMapWork(mapWork, context, partitions,(TableScanOperator) root, alias_id);
+      if( root instanceof TableScanOperator) {
+        setupMapWork(mapWork, context, partitions, (TableScanOperator) root, alias_id);
+      }
     }
 
     // add new item to the Spark work

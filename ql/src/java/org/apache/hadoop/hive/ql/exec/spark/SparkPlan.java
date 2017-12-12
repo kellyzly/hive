@@ -62,6 +62,7 @@ public class SparkPlan {
             "AssertionError: tran must be an instance of MapInput");
         rdd = tran.transform(null);
       } else {
+
         for (SparkTran parent : parents) {
           JavaPairRDD<HiveKey, BytesWritable> prevRDD = tranToOutputRDDMap.get(parent);
           if (rdd == null) {

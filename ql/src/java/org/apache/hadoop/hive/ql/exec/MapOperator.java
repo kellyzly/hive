@@ -422,6 +422,7 @@ public class MapOperator extends AbstractMapOperator {
     Map<String, Configuration> tableNameToConf = cloneConfsForNestedColPruning(hconf);
     Map<TableDesc, StructObjectInspector> convertedOI = getConvertedOI(tableNameToConf);
 
+    if( conf.getPathToAliases().size() >0 ){
     for (Map.Entry<Path, ArrayList<String>> entry : conf.getPathToAliases().entrySet()) {
       Path onefile = entry.getKey();
       List<String> aliases = entry.getValue();
@@ -452,7 +453,8 @@ public class MapOperator extends AbstractMapOperator {
           children.add(op);
         }
       }
-    }
+    }}
+
 
     initOperatorContext(children);
 
@@ -538,31 +540,33 @@ public class MapOperator extends AbstractMapOperator {
     // A mapper can span multiple files/partitions.
     // The serializers need to be reset if the input file changed
     ExecMapperContext context = getExecContext();
-    if (context != null && context.inputFileChanged()) {
+    if (context != null && context.inputFileChanged() && !context.isSkipCleanUpInputFileChanged()) {
       // The child operators cleanup if input file has changed
       cleanUpInputFileChanged();
     }
     int childrenDone = 0;
-    for (MapOpCtx current : currentCtxs) {
-      Object row = null;
-      try {
-        row = current.readRow(value, context);
-        if (!current.forward(row)) {
-          childrenDone++;
-        }
-      } catch (Exception e) {
-        // TODO: policy on deserialization errors
-        String message = null;
+    if (currentCtxs != null) {
+      for (MapOpCtx current : currentCtxs) {
+        Object row = null;
         try {
-          message = toErrorMessage(value, row, current.rowObjectInspector);
-        } catch (Throwable t) {
-          message = "[" + row + ", " + value + "]: cannot get error message " + t.getMessage();
+          row = current.readRow(value, context);
+          if (!current.forward(row)) {
+            childrenDone++;
+          }
+        } catch (Exception e) {
+          // TODO: policy on deserialization errors
+          String message = null;
+          try {
+            message = toErrorMessage(value, row, current.rowObjectInspector);
+          } catch (Throwable t) {
+            message = "[" + row + ", " + value + "]: cannot get error message " + t.getMessage();
+          }
+          if (row == null) {
+            deserialize_error_count.set(deserialize_error_count.get() + 1);
+            throw new HiveException("Hive Runtime Error while processing writable " + message, e);
+          }
+          throw new HiveException("Hive Runtime Error while processing row " + message, e);
         }
-        if (row == null) {
-          deserialize_error_count.set(deserialize_error_count.get() + 1);
-          throw new HiveException("Hive Runtime Error while processing writable " + message, e);
-        }
-        throw new HiveException("Hive Runtime Error while processing row " + message, e);
       }
     }
     rowsForwarded(childrenDone, 1);
@@ -580,7 +584,11 @@ public class MapOperator extends AbstractMapOperator {
         LOG.info(toString() + ": records read - " + numRows);
       }
     }
-    if (childrenDone == currentCtxs.length) {
+    if (currentCtxs != null) {
+      if (childrenDone == currentCtxs.length) {
+        setDone(true);
+      }
+    } else {
       setDone(true);
     }
   }

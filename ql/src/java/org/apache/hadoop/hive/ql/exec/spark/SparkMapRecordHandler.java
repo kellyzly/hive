@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 
+import com.google.common.base.Preconditions;
+import org.apache.hadoop.hive.ql.exec.SparkMapOperator2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
@@ -71,17 +73,35 @@ public class SparkMapRecordHandler extends SparkRecordHandler {
       // create map and fetch operators
       MapWork mrwork = Utilities.getMapWork(job);
 
+      if (job.getBoolean("hive.spark.optimize.shared.work",false) == true) {
+        if (mrwork.getAllOperators().size() != 1) {
+          execContext.setSkipCleanUpInputFileChanged(true);
+        }
+      }
+
       CompilationOpContext runtimeCtx = new CompilationOpContext();
       if (mrwork.getVectorMode()) {
         mo = new VectorMapOperator(runtimeCtx);
       } else {
-        mo = new MapOperator(runtimeCtx);
+        if (job.getBoolean("hive.spark.optimize.shared.work",false) == false) {
+          mo = new MapOperator(runtimeCtx);
+        }else{
+          mo = new SparkMapOperator2(runtimeCtx);
+        }
       }
       mo.setConf(mrwork);
 
       // initialize map operator
       mo.initialize(jc, null);
-      mo.setChildren(job);
+      if( mo instanceof SparkMapOperator2){
+        SparkMapOperator2 sparkMo = (SparkMapOperator2)mo;
+        Preconditions.checkArgument(mrwork.getAllRootOperators().size() == 1,
+            "AssertionError: expected root.getParentOperators() to be empty");
+        Operator rootOp = mrwork.getAllRootOperators().iterator().next();
+        sparkMo.setChildrenFromRoot(rootOp);
+      }else {
+        mo.setChildren(job);
+      }
       LOG.info(mo.dump(0));
       // initialize map local work
       localWork = mrwork.getMapRedLocalWork();

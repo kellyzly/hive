@@ -50,6 +50,11 @@ public class ExecMapperContext {
 
   private String currentBigBucketFile=null;
 
+  //to skip MapOperator.cleanUpInputFileChanged(), If not skip,
+  // org.apache.hadoop.hive.ql.exec.AbstractMapOperator.getNominalPath() will throw exception as
+  // MapWork#getPathToAliases() is empty
+  private boolean skipCleanUpInputFileChanged = false;
+
   public String getCurrentBigBucketFile() {
     return currentBigBucketFile;
   }
@@ -147,5 +152,13 @@ public class ExecMapperContext {
 
   public IOContext getIoCxt() {
     return ioCxt;
+  }
+
+  public void setSkipCleanUpInputFileChanged(boolean skipCleanUpInputFileChanged) {
+    this.skipCleanUpInputFileChanged = skipCleanUpInputFileChanged;
+  }
+
+  public boolean isSkipCleanUpInputFileChanged() {
+    return skipCleanUpInputFileChanged;
   }
 }

@@ -104,14 +104,42 @@ public class SparkPlanGenerator {
     workToParentWorkTranMap.clear();
 
     try {
-      for (BaseWork work : sparkWork.getAllWork()) {
-        perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
-        SparkTran tran = generate(work, sparkWork);
-        SparkTran parentTran = generateParentTran(sparkPlan, sparkWork, work);
-        sparkPlan.addTran(tran);
-        sparkPlan.connect(parentTran, tran);
-        workToTranMap.put(work, tran);
-        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+      if (jobConf.get("hive.spark.optimize.shared.work").equals("false")) {
+        for (BaseWork work : sparkWork.getAllWork()) {
+          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+          SparkTran tran = generate(work, sparkWork);
+          SparkTran parentTran = generateParentTran(sparkPlan, sparkWork, work);
+          sparkPlan.addTran(tran);
+          sparkPlan.connect(parentTran, tran);
+          workToTranMap.put(work, tran);
+          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+        }
+      } else {
+        for (BaseWork work : sparkWork.getAllWork()) {
+          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+          SparkTran tran;
+          SparkTran mapInput = null;
+          if (work instanceof MapWork && work.getAllOperators().size() == 1) {
+            //MapInput
+            tran = generateMapInput(sparkPlan, (MapWork) work);
+            sparkPlan.addTran(tran);
+          } else if (work instanceof MapWork && work.getAllOperators().size() > 1) {
+            tran = generate(work, sparkWork);
+            sparkPlan.addTran(tran);
+            BaseWork parent = sparkWork.getParents(work).get(0);
+            Preconditions.checkArgument(workToTranMap.containsKey(parent),
+              "AssertionError: expected workToTranMap.containsKey(parent) to be true");
+            SparkTran parentTran = workToTranMap.get(parent);
+            sparkPlan.connect(parentTran, tran);
+          } else {
+            SparkTran shuffleTran = generateParentTran(sparkPlan, sparkWork, work);
+            tran = generate(work, sparkWork);
+            sparkPlan.addTran(tran);
+            sparkPlan.connect(shuffleTran, tran);
+          }
+          workToTranMap.put(work, tran);
+          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+        }
       }
     } finally {
       // clear all ThreadLocal cached MapWork/ReduceWork after plan generation
@@ -296,9 +324,14 @@ public class SparkPlanGenerator {
     if (work instanceof MapWork) {
       MapWork mapWork = (MapWork) work;
       cloned.setBoolean("mapred.task.is.map", true);
-      List<Path> inputPaths = Utilities.getInputPaths(cloned, mapWork,
+      // If "hive.spark.optimize.shared.work" as false and MapWork.getAllOperators().size() == 1
+      // we need to call Utilities.setInputPaths to initialize FileInputFormat of jobConf, other NPE will be thrown
+      // at Utilities.createDummyFileForEmptyTable
+      if(HiveConf.getVar(cloned, HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION).equals("false") || mapWork.getAllOperators().size()==1 ) {
+        List<Path> inputPaths = Utilities.getInputPaths(cloned, mapWork,
           scratchDir, context, false);
-      Utilities.setInputPaths(cloned, inputPaths);
+        Utilities.setInputPaths(cloned, inputPaths);
+      }
       Utilities.setMapWork(cloned, mapWork, scratchDir, false);
       Utilities.createTmpDirs(cloned, mapWork);
       if (work instanceof MergeFileWork) {

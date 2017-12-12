@@ -779,7 +779,7 @@ public class VectorMapOperator extends AbstractMapOperator {
     // A mapper can span multiple files/partitions.
     // The VectorPartitionContext need to be changed if the input file changed
     ExecMapperContext context = getExecContext();
-    if (context != null && context.inputFileChanged()) {
+    if (context != null && context.inputFileChanged() && !context.isSkipCleanUpInputFileChanged()) {
       // The child operators cleanup if input file has changed
       cleanUpInputFileChanged();
     }
