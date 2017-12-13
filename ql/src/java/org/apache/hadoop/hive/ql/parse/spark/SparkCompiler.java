@@ -118,24 +118,31 @@ public class SparkCompiler extends TaskCompiler {
 
     // Run Spark Dynamic Partition Pruning
     runDynamicPartitionPruning(procCtx);
+    LOG.info("After runDynamicPartitionPruning:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Annotation OP tree with statistics
     runStatsAnnotation(procCtx);
+    LOG.info("After runStatsAnnotation:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Set reducer parallelism
     runSetReducerParallelism(procCtx);
+    LOG.info("After runSetReducerParallelism:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Run Join releated optimizations
     runJoinOptimizations(procCtx);
+    LOG.info("After runJoinOptimizations:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Remove DPP based on expected size of the output data
     runRemoveDynamicPruning(procCtx);
+    LOG.info("After runRemoveDynamicPruning:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Remove cyclic dependencies for DPP
     runCycleAnalysisForPartitionPruning(procCtx);
+    LOG.info("After runCycleAnalysisForPartitionPruning:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Remove nested DPPs
     removeNestedDPP(procCtx);
+    LOG.info("After removeNestedDPP:\n" + Operator.toString(procCtx.getParseContext().getTopOps().values()));
 
     // Re-run constant propagation so we fold any new constants introduced by the operator optimizers
     // Specifically necessary for DPP because we might have created lots of "and true and true" conditions
@@ -303,8 +310,8 @@ public class SparkCompiler extends TaskCompiler {
     ParseContext pCtx = procCtx.getParseContext();
     Map<Rule, NodeProcessor> opRules = new LinkedHashMap<Rule, NodeProcessor>();
     opRules.put(new RuleRegExp("Set parallelism - ReduceSink",
-            ReduceSinkOperator.getOperatorName() + "%"),
-        new SetSparkReducerParallelism(pCtx.getConf()));
+        ReduceSinkOperator.getOperatorName() + "%"),
+      new SetSparkReducerParallelism(pCtx.getConf()));
 
     // The dispatcher fires the processor corresponding to the closest matching
     // rule and passes the context along
@@ -439,18 +446,18 @@ public class SparkCompiler extends TaskCompiler {
         new SparkProcessAnalyzeTable(GenSparkUtils.getUtils()));
 
     opRules.put(new RuleRegExp("Remember union", UnionOperator.getOperatorName() + "%"),
-        new NodeProcessor() {
-          @Override
-          public Object process(Node n, Stack<Node> s,
-                                NodeProcessorCtx procCtx, Object... os) throws SemanticException {
-            GenSparkProcContext context = (GenSparkProcContext) procCtx;
-            UnionOperator union = (UnionOperator) n;
+      new NodeProcessor() {
+        @Override
+        public Object process(Node n, Stack<Node> s,
+                              NodeProcessorCtx procCtx, Object... os) throws SemanticException {
+          GenSparkProcContext context = (GenSparkProcContext) procCtx;
+          UnionOperator union = (UnionOperator) n;
 
-            // simply need to remember that we've seen a union.
-            context.currentUnionOperators.add(union);
-            return null;
-          }
+          // simply need to remember that we've seen a union.
+          context.currentUnionOperators.add(union);
+          return null;
         }
+      }
     );
 
     /**
