@@ -132,6 +132,9 @@ public class SparkCompiler extends TaskCompiler {
     // Remove cyclic dependencies for DPP
     runCycleAnalysisForPartitionPruning(procCtx);
 
+    // Remove nested DPPs
+    removeNestedDPP(procCtx);
+
     // Re-run constant propagation so we fold any new constants introduced by the operator optimizers
     // Specifically necessary for DPP because we might have created lots of "and true and true" conditions
     if (procCtx.getConf().getBoolVar(HiveConf.ConfVars.HIVEOPTCONSTANTPROPAGATION)) {

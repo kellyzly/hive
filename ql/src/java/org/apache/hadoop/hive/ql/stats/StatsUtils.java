@@ -1234,10 +1234,6 @@ public class StatsUtils {
 
   /**
    * Get the size of complex data types
-   * @param conf
-   *          - hive conf
-   * @param oi
-   *          - object inspector
    * @return raw data size
    */
   public static long getSizeOfComplexTypes(HiveConf conf, ObjectInspector oi) {
@@ -1271,7 +1267,7 @@ public class StatsUtils {
         // check if list elements are primitive or Objects
         ObjectInspector leoi = scloi.getListElementObjectInspector();
         if (leoi.getCategory().equals(ObjectInspector.Category.PRIMITIVE)) {
-          result += getSizeOfPrimitiveTypeArraysFromType(leoi.getTypeName(), length);
+          result += getSizeOfPrimitiveTypeArraysFromType(leoi.getTypeName(), length, conf);
         } else {
           result += JavaDataModel.get().lengthForObjectArrayOfSize(length);
         }
@@ -1373,13 +1369,9 @@ public class StatsUtils {
 
   /**
    * Get the size of arrays of primitive types
-   * @param colType
-   *          - column type
-   * @param length
-   *          - array length
    * @return raw data size
    */
-  public static long getSizeOfPrimitiveTypeArraysFromType(String colType, int length) {
+  public static long getSizeOfPrimitiveTypeArraysFromType(String colType, int length, HiveConf conf) {
     String colTypeLowerCase = colType.toLowerCase();
     if (colTypeLowerCase.equals(serdeConstants.TINYINT_TYPE_NAME)
         || colTypeLowerCase.equals(serdeConstants.SMALLINT_TYPE_NAME)
@@ -1396,12 +1388,21 @@ public class StatsUtils {
     } else if (colTypeLowerCase.equals(serdeConstants.BOOLEAN_TYPE_NAME)) {
       return JavaDataModel.get().lengthForBooleanArrayOfSize(length);
     } else if (colTypeLowerCase.equals(serdeConstants.TIMESTAMP_TYPE_NAME) ||
+        colTypeLowerCase.equals(serdeConstants.DATETIME_TYPE_NAME) ||
+        colTypeLowerCase.equals(serdeConstants.INTERVAL_YEAR_MONTH_TYPE_NAME) ||
+        colTypeLowerCase.equals(serdeConstants.INTERVAL_DAY_TIME_TYPE_NAME) ||
         colTypeLowerCase.equals(serdeConstants.TIMESTAMPLOCALTZ_TYPE_NAME)) {
       return JavaDataModel.get().lengthForTimestampArrayOfSize(length);
     } else if (colTypeLowerCase.equals(serdeConstants.DATE_TYPE_NAME)) {
       return JavaDataModel.get().lengthForDateArrayOfSize(length);
     } else if (colTypeLowerCase.startsWith(serdeConstants.DECIMAL_TYPE_NAME)) {
       return JavaDataModel.get().lengthForDecimalArrayOfSize(length);
+    } else if (colTypeLowerCase.equals(serdeConstants.STRING_TYPE_NAME)
+        || colTypeLowerCase.startsWith(serdeConstants.VARCHAR_TYPE_NAME)
+        || colTypeLowerCase.startsWith(serdeConstants.CHAR_TYPE_NAME)) {
+      int configVarLen = HiveConf.getIntVar(conf, HiveConf.ConfVars.HIVE_STATS_MAX_VARIABLE_LENGTH);
+      int siz = JavaDataModel.get().lengthForStringOfLength(configVarLen);
+      return JavaDataModel.get().lengthForPrimitiveArrayOfSize(siz, length);
     } else {
       return 0;
     }
@@ -1556,11 +1557,7 @@ public class StatsUtils {
 
     for (ColStatistics parentColStat : parentStats.getColumnStats()) {
       ColStatistics colStat;
-      try {
-        colStat = parentColStat.clone();
-      } catch (CloneNotSupportedException e) {
-        colStat = null;
-      }
+      colStat = parentColStat.clone();
       if (colStat != null) {
         cs.add(colStat);
       }
@@ -1604,11 +1601,7 @@ public class StatsUtils {
         ColStatistics colStats = parentStats.getColumnStatisticsFromColName(colName);
         if (colStats != null) {
           /* If statistics for the column already exist use it. */
-          try {
             return colStats.clone();
-          } catch (CloneNotSupportedException e) {
-            return null;
-          }
         }
 
         // virtual columns
@@ -1619,11 +1612,7 @@ public class StatsUtils {
         // clone the column stats and return
         ColStatistics result = parentStats.getColumnStatisticsFromColName(colName);
         if (result != null) {
-          try {
             return result.clone();
-          } catch (CloneNotSupportedException e) {
-            return null;
-          }
         }
         return null;
       }
@@ -1651,12 +1640,7 @@ public class StatsUtils {
         ColStatistics stats = parentStats.getColumnStatisticsFromColName(engfd.getCols().get(0));
         if (stats != null) {
           ColStatistics newStats;
-          try {
-            newStats = stats.clone();
-          } catch (CloneNotSupportedException e) {
-            LOG.warn("error cloning stats, this should not happen");
-            return null;
-          }
+          newStats = stats.clone();
           newStats.setColumnName(colName);
           colType = colType.toLowerCase();
           newStats.setColumnType(colType);

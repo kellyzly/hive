@@ -24,6 +24,7 @@ import com.google.common.collect.Lists;
 import org.antlr.runtime.tree.CommonTree;
 import org.antlr.runtime.tree.Tree;
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
+import org.apache.hadoop.hive.metastore.utils.MetaStoreUtils;
 import org.apache.hadoop.hive.ql.io.AcidUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +34,6 @@ import org.apache.hadoop.hive.common.JavaUtils;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
-import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.TableType;
 import org.apache.hadoop.hive.metastore.Warehouse;
 import org.apache.hadoop.hive.metastore.api.Database;
@@ -982,8 +982,16 @@ public class DDLSemanticAnalyzer extends BaseSemanticAnalyzer {
           "Unexpected token in alter resource plan statement: " + child.getType());
       }
     }
-    rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(),
-        new AlterResourcePlanDesc(resourcePlan, rpName, validate, isEnableActive)), conf));
+    AlterResourcePlanDesc desc =
+        new AlterResourcePlanDesc(resourcePlan, rpName, validate, isEnableActive);
+    if (validate) {
+      ctx.setResFile(ctx.getLocalTmpPath());
+      desc.setResFile(ctx.getResFile().toString());
+    }
+    rootTasks.add(TaskFactory.get(new DDLWork(getInputs(), getOutputs(), desc), conf));
+    if (validate) {
+      setFetchTask(createFetchTask(AlterResourcePlanDesc.getSchema()));
+    }
   }
 
   private void analyzeDropResourcePlan(ASTNode ast) throws SemanticException {

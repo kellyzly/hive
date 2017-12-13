@@ -65,7 +65,6 @@ import org.apache.hadoop.hive.common.StatsSetupConst.StatDB;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.conf.HiveConf.StrictChecks;
-import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.TableType;
 import org.apache.hadoop.hive.metastore.TransactionalValidationListener;
 import org.apache.hadoop.hive.metastore.Warehouse;
@@ -6816,6 +6815,24 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
 
       checkImmutableTable(qb, dest_tab, dest_path, false);
 
+      // check for partition
+      List<FieldSchema> parts = dest_tab.getPartitionKeys();
+      if (parts != null && parts.size() > 0) { // table is partitioned
+        if (partSpec == null || partSpec.size() == 0) { // user did NOT specify partition
+          throw new SemanticException(generateErrorMessage(
+              qb.getParseInfo().getDestForClause(dest),
+              ErrorMsg.NEED_PARTITION_ERROR.getMsg()));
+        }
+        dpCtx = qbm.getDPCtx(dest);
+        if (dpCtx == null) {
+          dest_tab.validatePartColumnNames(partSpec, false);
+          dpCtx = new DynamicPartitionCtx(dest_tab, partSpec,
+              conf.getVar(HiveConf.ConfVars.DEFAULTPARTITIONNAME),
+              conf.getIntVar(HiveConf.ConfVars.DYNAMICPARTITIONMAXPARTSPERNODE));
+          qbm.setDPCtx(dest, dpCtx);
+        }
+      }
+
       // Check for dynamic partitions.
       dpCtx = checkDynPart(qb, qbm, dest_tab, partSpec, dest);
       if (dpCtx != null && dpCtx.getSPPath() != null) {
@@ -7402,7 +7419,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     }
     try {
       FileSystem fs = dest_path.getFileSystem(conf);
-      if (! MetaStoreUtils.isDirEmpty(fs,dest_path)){
+      if (! org.apache.hadoop.hive.metastore.utils.FileUtils.isDirEmpty(fs,dest_path)){
         LOG.warn("Attempted write into an immutable table : "
             + dest_tab.getTableName() + " : " + dest_path);
         throw new SemanticException(
@@ -12841,7 +12858,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
       for (int child_pos = 0; child_pos < child_count; ++child_pos) {
         ASTNode node = (ASTNode) next.getChild(child_pos);
         int type = node.getToken().getType();
-        if (type == HiveParser.TOK_SELECT) {
+        if (type == HiveParser.TOK_SELECT || type == HiveParser.TOK_SELECTDI) {
           selectNode = node;
         } else if (type == HiveParser.TOK_GROUPBY) {
           groupbyNode = node;
@@ -12877,7 +12894,49 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
           }
         }
 
-        // orderby position will be processed in genPlan
+        // replace each of the position alias in ORDERBY with the actual column name,
+        // if cbo is enabled, orderby position will be processed in genPlan
+        if (!HiveConf.getBoolVar(conf, HiveConf.ConfVars.HIVE_CBO_ENABLED)
+            && orderbyNode != null) {
+          isAllCol = false;
+          for (int child_pos = 0; child_pos < selectNode.getChildCount(); ++child_pos) {
+            ASTNode node = (ASTNode) selectNode.getChild(child_pos).getChild(0);
+            if (node != null && node.getToken().getType() == HiveParser.TOK_ALLCOLREF) {
+              isAllCol = true;
+            }
+          }
+          for (int child_pos = 0; child_pos < orderbyNode.getChildCount(); ++child_pos) {
+            ASTNode colNode = null;
+            ASTNode node = null;
+            if (orderbyNode.getChildCount() > 0) {
+              colNode = (ASTNode) orderbyNode.getChild(child_pos).getChild(0);
+              if (colNode.getChildCount() > 0) {
+                node = (ASTNode) colNode.getChild(0);
+              }
+            }
+            if (node != null && node.getToken().getType() == HiveParser.Number) {
+              if (isObyByPos) {
+                if (!isAllCol) {
+                  int pos = Integer.parseInt(node.getText());
+                  if (pos > 0 && pos <= selectExpCnt && selectNode.getChild(pos - 1).getChildCount() > 0) {
+                    colNode.setChild(0, selectNode.getChild(pos - 1).getChild(0));
+                  } else {
+                    throw new SemanticException(
+                      ErrorMsg.INVALID_POSITION_ALIAS_IN_ORDERBY.getMsg(
+                      "Position alias: " + pos + " does not exist\n" +
+                      "The Select List is indexed from 1 to " + selectExpCnt));
+                  }
+                } else {
+                  throw new SemanticException(
+                    ErrorMsg.NO_SUPPORTED_ORDERBY_ALLCOLREF_POS.getMsg());
+                }
+              } else { //if not using position alias and it is a number.
+                warn("Using constant number " + node.getText() +
+                  " in order by. If you try to use position alias when hive.orderby.position.alias is false, the position alias will be ignored.");
+              }
+            }
+          }
+        }
       }
 
       for (int i = next.getChildren().size() - 1; i >= 0; i--) {
