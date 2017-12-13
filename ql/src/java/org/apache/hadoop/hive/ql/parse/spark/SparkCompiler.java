@@ -34,12 +34,14 @@ import org.apache.hadoop.hive.ql.exec.ConditionalTask;
 import org.apache.hadoop.hive.ql.exec.DummyStoreOperator;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator;
 import org.apache.hadoop.hive.ql.exec.FilterOperator;
+import org.apache.hadoop.hive.ql.exec.GroupByOperator;
 import org.apache.hadoop.hive.ql.exec.JoinOperator;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.OperatorUtils;
 import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
 import org.apache.hadoop.hive.ql.exec.SMBMapJoinOperator;
+import org.apache.hadoop.hive.ql.exec.SelectOperator;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.exec.UnionOperator;
@@ -614,5 +616,86 @@ public class SparkCompiler extends TaskCompiler {
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_TASK_TREE);
     return;
+  }
+
+  /** The following is an example of nested DPP:
+   *
+   *             TS          TS
+   *             |           |
+   *            ...         FIL
+   *            |           |  \
+   *            RS         RS  SEL
+   *              \        /    |
+   *     TS          JOIN      GBY
+   *     |         /     \      |
+   *    RS        RS    SEL   DPP2
+   *     \       /       |
+   *       JOIN         GBY
+   *                    |
+   *                  DPP1
+   *
+   * where DPP1 depends on DPP2.
+   *
+   * To avoid such case, we'll visit all the branching operators. If a branching operator has any
+   * further away DPP branches in its sub-tree, such branches will be removed.
+   * In the above example, the branch of DPP1 will be removed.
+   */
+  private void removeNestedDPP(OptimizeSparkProcContext procContext) {
+    if (!conf.isSparkDPPAny()) {
+      return;
+    }
+    Set<SparkPartitionPruningSinkOperator> allDPPs = new HashSet<>();
+    Set<Operator<?>> seen = new HashSet<>();
+    // collect all DPP sinks
+    for (TableScanOperator root : procContext.getParseContext().getTopOps().values()) {
+      SparkUtilities.collectOp(root, SparkPartitionPruningSinkOperator.class, allDPPs,
+          seen, o -> false);
+    }
+    // collect all branching operators
+    Set<Operator<?>> branchingOps = new HashSet<>();
+    for (SparkPartitionPruningSinkOperator dpp : allDPPs) {
+      branchingOps.add(dpp.getBranchingOp());
+    }
+    // remember the branching ops we have visited
+    Set<Operator<?>> visited = new HashSet<>();
+    for (Operator<?> branchingOp : branchingOps) {
+      if (!visited.contains(branchingOp)) {
+        visited.add(branchingOp);
+        seen.clear();
+        Set<SparkPartitionPruningSinkOperator> nestedDPPs = new HashSet<>();
+        for (Operator<?> branch : branchingOp.getChildOperators()) {
+          if (!isDirectDPPBranch(branch)) {
+            SparkUtilities.collectOp(branch, SparkPartitionPruningSinkOperator.class, nestedDPPs,
+                seen, this::stopAtMJ);
+          }
+        }
+        for (SparkPartitionPruningSinkOperator nestedDPP : nestedDPPs) {
+          visited.add(nestedDPP.getBranchingOp());
+          OperatorUtils.removeBranch(nestedDPP);
+        }
+      }
+    }
+  }
+
+  // whether of pattern "SEL - GBY - DPP"
+  private boolean isDirectDPPBranch(Operator<?> op) {
+    if (op instanceof SelectOperator && op.getChildOperators() != null
+        && op.getChildOperators().size() == 1) {
+      op = op.getChildOperators().get(0);
+      if (op instanceof GroupByOperator && op.getChildOperators() != null
+          && op.getChildOperators().size() == 1) {
+        op = op.getChildOperators().get(0);
+        return op instanceof SparkPartitionPruningSinkOperator;
+      }
+    }
+    return false;
+  }
+
+  // If a branch is of pattern "RS - MAPJOIN", it means we're on the "small table" side of a
+  // map join. Since there will be a job boundary, we shouldn't look for DPPs beyond this.
+  private boolean stopAtMJ(Operator<?> op) {
+    return op instanceof ReduceSinkOperator && op.getChildOperators() != null
+        && op.getChildOperators().size() == 1 && op.getChildOperators()
+        .get(0) instanceof MapJoinOperator;
   }
 }

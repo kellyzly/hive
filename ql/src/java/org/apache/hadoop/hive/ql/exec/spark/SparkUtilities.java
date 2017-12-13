@@ -21,8 +21,12 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
+import java.util.Set;
+import java.util.function.Function;
 
 import com.google.common.base.Preconditions;
 import org.apache.commons.io.FilenameUtils;
@@ -207,6 +211,34 @@ public class SparkUtilities {
     }
     for (Operator<?> child : root.getChildOperators()) {
       collectOp(result, child, clazz);
+    }
+  }
+
+  /**
+   * Collect operators of type T starting from root. Matching operators will be put into result.
+   * Set seen can be used to skip search in certain branches.
+   * Function stop can be used to stop the search under certain conditions.
+   */
+  public static <T extends Operator<?>> void collectOp(Operator<?> root, Class<T> cls,
+      Collection<T> result, Set<Operator<?>> seen, Function<Operator<?>, Boolean> stopAt) {
+    if (seen.contains(root) || stopAt.apply(root)) {
+      return;
+    }
+    Deque<Operator<?>> deque = new ArrayDeque<>();
+    deque.add(root);
+    while (!deque.isEmpty()) {
+      Operator<?> op = deque.remove();
+      seen.add(op);
+      if (cls.isInstance(op)) {
+        result.add((T) op);
+      }
+      if (op.getChildOperators() != null) {
+        for (Operator<?> child : op.getChildOperators()) {
+          if (!seen.contains(child) && !stopAt.apply(child)) {
+            deque.add(child);
+          }
+        }
+      }
     }
   }
 
