@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 
+import com.google.common.base.Preconditions;
+import org.apache.hadoop.hive.ql.exec.SparkMapOperator2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
@@ -75,7 +77,15 @@ public class SparkMapRecordHandler extends SparkRecordHandler {
       if (mrwork.getVectorMode()) {
         mo = new VectorMapOperator(runtimeCtx);
       } else {
-        mo = new MapOperator(runtimeCtx);
+        if (job.getBoolean("hive.spark.optimize.shared.work", false) == false) {
+          mo = new MapOperator(runtimeCtx);
+        } else {
+          mo = new SparkMapOperator2(runtimeCtx);
+          Preconditions.checkArgument(mrwork.getAllRootOperators().size() == 1,
+              "AssertionError: expected root.getParentOperators() to be empty");
+          Operator rootOp = mrwork.getAllRootOperators().iterator().next();
+          ((SparkMapOperator2) mo).setRoootOfMapWork(rootOp);
+        }
       }
       mo.setConf(mrwork);
 

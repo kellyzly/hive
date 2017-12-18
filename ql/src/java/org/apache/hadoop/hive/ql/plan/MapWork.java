@@ -19,7 +19,6 @@
 package org.apache.hadoop.hive.ql.plan;
 
 import org.apache.hadoop.hive.common.StringInternUtils;
-import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Utilities;
 
 import java.util.ArrayList;
@@ -27,14 +26,12 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Properties;
 import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
@@ -160,6 +157,9 @@ public class MapWork extends BaseWork {
   private String llapIoDesc;
 
   private boolean isMergeFromResolver;
+  //HIVE-17486: Change M-R to M-M-R in Hive on Spark
+  //skipInitializeFileInputFormat is skip initializing FileInputFormat of second M
+  private boolean skipInitializeFileInputFormat;
 
   public MapWork() {}
 
@@ -866,5 +866,13 @@ public class MapWork extends BaseWork {
       return null;
     }
     return new MapExplainVectorization(this);
+  }
+
+  public boolean isSkipInitializeFileInputFormat() {
+    return skipInitializeFileInputFormat;
+  }
+
+  public void setSkipInitializeFileInputFormat(boolean skipInitializeFileInputFormat) {
+    this.skipInitializeFileInputFormat = skipInitializeFileInputFormat;
   }
 }

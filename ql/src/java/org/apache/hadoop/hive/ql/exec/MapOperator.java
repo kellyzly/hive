@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -430,7 +429,7 @@ public class MapOperator extends AbstractMapOperator {
       Configuration newConf = tableNameToConf.get(tableDesc.getTableName());
 
       for (String alias : aliases) {
-        Operator<? extends OperatorDesc> op = conf.getAliasToWork().get(alias);
+        Operator<? extends OperatorDesc> op = getRootOfMapWork(alias);
         if (LOG.isDebugEnabled()) {
           LOG.debug("Adding alias " + alias + " to work list for file "
               + onefile);
@@ -458,6 +457,10 @@ public class MapOperator extends AbstractMapOperator {
 
     // we found all the operators that we are supposed to process.
     setChildOperators(children);
+  }
+
+  protected Operator getRootOfMapWork(String alias) {
+    return conf.getAliasToWork().get(alias);
   }
 
   private void initOperatorContext(List<Operator<? extends OperatorDesc>> children)

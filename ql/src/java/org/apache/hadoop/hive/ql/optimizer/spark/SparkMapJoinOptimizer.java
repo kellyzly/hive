@@ -99,6 +99,9 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
 
     LOG.info("Convert to non-bucketed map join");
     MapJoinOperator mapJoinOp = convertJoinMapJoin(joinOp, context, mapJoinConversionPos);
+    //Refer tez code ConvertJoinMapJoin.estimateNumBuckets, if numBuckets <0, then defaultNumBucket is 1
+    int defaultNumBucket = 1;
+    mapJoinOp.getConf().setInMemoryDataSize(mapJoinInfo[2] / defaultNumBucket);
     // For native vectorized map join, we require the key SerDe to be BinarySortableSerDe
     // Note: the MJ may not really get natively-vectorized later,
     // but changing SerDe won't hurt correctness
@@ -115,6 +118,9 @@ public class SparkMapJoinOptimizer implements NodeProcessor {
         LOG.info("Converted to map join with " + numBuckets + " buckets");
         bucketColNames = joinOp.getOpTraits().getBucketColNames();
         mapJoinInfo[2] /= numBuckets;
+        //Refer tez code in ConvertJoinMapJoin.getMapJoinConversionPos()
+        mapJoinOp.getConf().setInMemoryDataSize(mapJoinInfo[2]);
+
       } else {
         LOG.info("Can not convert to bucketed map join");
       }

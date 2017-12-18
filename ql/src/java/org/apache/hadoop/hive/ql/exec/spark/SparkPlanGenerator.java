@@ -104,14 +104,43 @@ public class SparkPlanGenerator {
     workToParentWorkTranMap.clear();
 
     try {
-      for (BaseWork work : sparkWork.getAllWork()) {
-        perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
-        SparkTran tran = generate(work, sparkWork);
-        SparkTran parentTran = generateParentTran(sparkPlan, sparkWork, work);
-        sparkPlan.addTran(tran);
-        sparkPlan.connect(parentTran, tran);
-        workToTranMap.put(work, tran);
-        perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+      if (jobConf.getBoolean("hive.spark.optimize.shared.work", true) == false) {
+        for (BaseWork work : sparkWork.getAllWork()) {
+          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+          SparkTran tran = generate(work, sparkWork);
+          SparkTran parentTran = generateParentTran(sparkPlan, sparkWork, work);
+          sparkPlan.addTran(tran);
+          sparkPlan.connect(parentTran, tran);
+          workToTranMap.put(work, tran);
+          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+        }
+      } else {
+        for (BaseWork work : sparkWork.getAllWork()) {
+          perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+          SparkTran tran;
+          SparkTran mapInput = null;
+          if (work instanceof MapWork && work.getAllOperators().size() == 1) {
+            //MapInput
+            tran = generateMapInput(sparkPlan, (MapWork) work,isCachingWork(work,sparkWork));
+            sparkPlan.addTran(tran);
+          } else if (work instanceof MapWork && work.getAllOperators().size() > 1) {
+            ((MapWork) work).setSkipInitializeFileInputFormat(true);
+            tran = generate(work, sparkWork);
+            sparkPlan.addTran(tran);
+            BaseWork parent = sparkWork.getParents(work).get(0);
+            Preconditions.checkArgument(workToTranMap.containsKey(parent),
+                "AssertionError: expected workToTranMap.containsKey(parent) to be true");
+            SparkTran parentTran = workToTranMap.get(parent);
+            sparkPlan.connect(parentTran, tran);
+          } else {
+            SparkTran shuffleTran = generateParentTran(sparkPlan, sparkWork, work);
+            tran = generate(work, sparkWork);
+            sparkPlan.addTran(tran);
+            sparkPlan.connect(shuffleTran, tran);
+          }
+          workToTranMap.put(work, tran);
+          perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_CREATE_TRAN + work.getName());
+        }
       }
     } finally {
       // clear all ThreadLocal cached MapWork/ReduceWork after plan generation
@@ -135,7 +164,7 @@ public class SparkPlanGenerator {
 
     SparkTran result;
     if (work instanceof MapWork) {
-      result = generateMapInput(sparkPlan, (MapWork)work);
+      result = generateMapInput(sparkPlan, (MapWork)work, isCachingWork(work, sparkWork));
       sparkPlan.addTran(result);
     } else if (work instanceof ReduceWork) {
       List<BaseWork> parentWorks = sparkWork.getParents(work);
@@ -184,8 +213,9 @@ public class SparkPlanGenerator {
   }
 
   @SuppressWarnings("unchecked")
-  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork)
+  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached)
       throws Exception {
+    LOG.info("MapWork :"+mapWork.getName()+ " cached:"+cached);
     JobConf jobConf = cloneJobConf(mapWork);
     Class ifClass = getInputFormat(jobConf, mapWork);
 
@@ -199,7 +229,8 @@ public class SparkPlanGenerator {
     }
 
     // Caching is disabled for MapInput due to HIVE-8920
-    MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+   // MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    MapInput result = new MapInput(sparkPlan, hadoopRDD, cached);
     return result;
   }
 
@@ -296,11 +327,18 @@ public class SparkPlanGenerator {
     if (work instanceof MapWork) {
       MapWork mapWork = (MapWork) work;
       cloned.setBoolean("mapred.task.is.map", true);
-      List<Path> inputPaths = Utilities.getInputPaths(cloned, mapWork,
-          scratchDir, context, false);
-      Utilities.setInputPaths(cloned, inputPaths);
+      // HIVE-17486: M-R structure is changed to M-M-R when enabling hive.spark.optimize.shared.work.
+      // for the first M, we need initialize FileInputFormat by Utilities#getInputPaths
+      // for the second M, we need not initialize FileInputFormat
+      if (!mapWork.isSkipInitializeFileInputFormat()) {
+        List<Path> inputPaths = Utilities.getInputPaths(cloned, mapWork,
+            scratchDir, context, false);
+        Utilities.setInputPaths(cloned, inputPaths);
+      }
       Utilities.setMapWork(cloned, mapWork, scratchDir, false);
-      Utilities.createTmpDirs(cloned, mapWork);
+      if (!mapWork.isSkipInitializeFileInputFormat()) {
+        Utilities.createTmpDirs(cloned, mapWork);
+      }
       if (work instanceof MergeFileWork) {
         MergeFileWork mergeFileWork = (MergeFileWork) work;
         cloned.set(Utilities.MAPRED_MAPPER_CLASS, MergeFileMapper.class.getName());

@@ -28,6 +28,9 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.LinkedListMultimap;
+import com.google.common.collect.Multimap;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.Context;
 import org.apache.hadoop.hive.ql.exec.ConditionalTask;
@@ -81,6 +84,7 @@ import org.apache.hadoop.hive.ql.optimizer.spark.SparkJoinHintOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkJoinOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkReduceSinkMapJoinProc;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkSharedWorkOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkSkewJoinResolver;
 import org.apache.hadoop.hive.ql.optimizer.spark.SplitSparkWorkResolver;
 import org.apache.hadoop.hive.ql.optimizer.stats.annotation.AnnotateWithStatistics;
@@ -136,6 +140,10 @@ public class SparkCompiler extends TaskCompiler {
     // Specifically necessary for DPP because we might have created lots of "and true and true" conditions
     if (procCtx.getConf().getBoolVar(HiveConf.ConfVars.HIVEOPTCONSTANTPROPAGATION)) {
       new ConstantPropagate(ConstantPropagateProcCtx.ConstantPropagateOption.SHORTCUT).transform(pCtx);
+    }
+
+    if (procCtx.getParseContext().getConf().getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+      new SparkSharedWorkOptimizer().transform(procCtx.getParseContext());
     }
 
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_OPERATOR_TREE);
@@ -414,8 +422,20 @@ public class SparkCompiler extends TaskCompiler {
     throws SemanticException {
     // create a walker which walks the tree in a DFS manner while maintaining
     // the operator stack. The dispatcher generates the plan from the operator tree
-    Map<Rule, NodeProcessor> opRules = new LinkedHashMap<Rule, NodeProcessor>();
+    HashMap<Rule, NodeProcessor> opRules1 = new LinkedHashMap();
+    opRules1.put(new RuleRegExp("Handle Analyze Command",
+            TableScanOperator.getOperatorName() + "%"),
+        new SparkProcessAnalyzeTable(GenSparkUtils.getUtils()));
+    Dispatcher disp1 = new DefaultRuleDispatcher(null, opRules1, procCtx);
+    GraphWalker ogw1 = new GenSparkWorkWalker(disp1, procCtx);
+    ogw1.startWalking(topNodes, null);
+
+
     GenSparkWork genSparkWork = new GenSparkWork(GenSparkUtils.getUtils());
+    HashMap<Rule, NodeProcessor> opRules = new LinkedHashMap();
+    if (conf.getBoolVar(HiveConf.ConfVars.HIVE_SPARK_SHARED_WORK_OPTIMIZATION)) {
+      opRules.put(new RuleRegExp("Split work -TableScan", TableScanOperator.getOperatorName() + "%"), genSparkWork);
+    }
 
     opRules.put(new RuleRegExp("Split Work - ReduceSink",
         ReduceSinkOperator.getOperatorName() + "%"), genSparkWork);
@@ -429,9 +449,7 @@ public class SparkCompiler extends TaskCompiler {
         FileSinkOperator.getOperatorName() + "%"),
         new CompositeProcessor(new SparkFileSinkProcessor(), genSparkWork));
 
-    opRules.put(new RuleRegExp("Handle Analyze Command",
-        TableScanOperator.getOperatorName() + "%"),
-        new SparkProcessAnalyzeTable(GenSparkUtils.getUtils()));
+
 
     opRules.put(new RuleRegExp("Remember union", UnionOperator.getOperatorName() + "%"),
         new NodeProcessor() {
