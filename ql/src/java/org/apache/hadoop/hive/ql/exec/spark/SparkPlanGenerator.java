@@ -206,7 +206,8 @@ public class SparkPlanGenerator {
     }
 
     // Caching is disabled for MapInput due to HIVE-8920
-    MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    //MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    MapInput result = new MapInput(sparkPlan, hadoopRDD, true/*cloneToWork.containsKey(mapWork)*/);
     return result;
   }
 
