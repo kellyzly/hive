@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.hadoop.hive.ql.exec.TableScanOperator;
+import org.apache.hadoop.hive.ql.optimizer.SharedTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,6 +80,7 @@ public class SparkPlanGenerator {
   private final Map<BaseWork, SparkTran> workToParentWorkTranMap;
   // a map from each BaseWork to its cloned JobConf
   private final Map<BaseWork, JobConf> workToJobConf;
+  private final Map<TableScanOperator,MapInput> tsMapInputMap;
 
   public SparkPlanGenerator(
     JavaSparkContext sc,
@@ -94,6 +97,7 @@ public class SparkPlanGenerator {
     this.workToParentWorkTranMap = new HashMap<BaseWork, SparkTran>();
     this.sparkReporter = sparkReporter;
     this.workToJobConf = new HashMap<BaseWork, JobConf>();
+    this.tsMapInputMap = new HashMap<>();
   }
 
   public SparkPlan generate(SparkWork sparkWork) throws Exception {
@@ -135,7 +139,7 @@ public class SparkPlanGenerator {
 
     SparkTran result;
     if (work instanceof MapWork) {
-      result = generateMapInput(sparkPlan, (MapWork)work);
+      result = generateMapInput(sparkPlan, (MapWork)work, isCachingWork(work, sparkWork));
       sparkPlan.addTran(result);
     } else if (work instanceof ReduceWork) {
       List<BaseWork> parentWorks = sparkWork.getParents(work);
@@ -184,23 +188,59 @@ public class SparkPlanGenerator {
   }
 
   @SuppressWarnings("unchecked")
-  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork)
-      throws Exception {
+  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached)
+    throws Exception {
+    LOG.info("MapWork :" + mapWork.getName() + " cached:" + cached);
     JobConf jobConf = cloneJobConf(mapWork);
+    MapInput mapInput = null;
+    if (jobConf.getBoolean(HiveConf.ConfVars.PLAN.HIVE_SPARK_SHARED_WORK_OPTIMIZATION.varname, false) == false) {
+      mapInput = createMapInput(sparkPlan, mapWork, false);
+    } else {
+      Operator operator = mapWork.getAllRootOperators().iterator().next();
+      TableScanOperator ts = (TableScanOperator) operator;
+      if (!SharedTable.getInstance().getSharedTables().containsKey(ts)) {
+        boolean needCache = needCache(ts);
+
+        mapInput = createMapInput(sparkPlan, mapWork, needCache);
+        if (needCache) {
+          tsMapInputMap.put(ts, mapInput);
+        }
+      } else {
+        TableScanOperator retainedTs = SharedTable.getInstance().getSharedTables().get(ts);
+        if (tsMapInputMap.containsKey(retainedTs)) {
+          mapInput = tsMapInputMap.get(retainedTs);
+        }
+      }
+    }
+    return mapInput;
+  }
+
+  private MapInput createMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached)   throws Exception {
     Class ifClass = getInputFormat(jobConf, mapWork);
 
     JavaPairRDD<WritableComparable, Writable> hadoopRDD;
     if (mapWork.getNumMapTasks() != null) {
       jobConf.setNumMapTasks(mapWork.getNumMapTasks());
       hadoopRDD = sc.hadoopRDD(jobConf, ifClass,
-          WritableComparable.class, Writable.class, mapWork.getNumMapTasks());
+        WritableComparable.class, Writable.class, mapWork.getNumMapTasks());
     } else {
       hadoopRDD = sc.hadoopRDD(jobConf, ifClass, WritableComparable.class, Writable.class);
     }
 
     // Caching is disabled for MapInput due to HIVE-8920
-    MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    //MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    MapInput result = new MapInput(sparkPlan, hadoopRDD, cached);
     return result;
+  }
+
+  private boolean needCache(TableScanOperator ts) {
+    Map<TableScanOperator,TableScanOperator> sharedTables = SharedTable.getInstance().getSharedTables();
+    for(TableScanOperator key: sharedTables.keySet()){
+      if( sharedTables.get(key).getOperatorId().equals(ts.getOperatorId())){
+          return true;
+      }
+    }
+    return false;
   }
 
   private ShuffleTran generate(SparkPlan sparkPlan, SparkEdgeProperty edge, boolean toCache) {

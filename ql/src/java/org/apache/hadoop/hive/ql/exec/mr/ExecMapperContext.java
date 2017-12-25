@@ -18,6 +18,8 @@
 package org.apache.hadoop.hive.ql.exec.mr;
 
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.exec.FetchOperator;
@@ -28,6 +30,7 @@ import org.apache.hadoop.mapred.JobConf;
 
 public class ExecMapperContext {
 
+  private static final Logger LOG = LoggerFactory.getLogger(ExecMapperContext.class);
   // lastInputPath should be changed by the root of the operator tree ExecMapper.map()
   // but kept unchanged throughout the operator tree for one row
   private Path lastInputPath = null;
@@ -107,10 +110,22 @@ public class ExecMapperContext {
 
   public Path getCurrentInputPath() {
     currentInputPath = this.ioCxt.getInputPath();
+    for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
+      LOG.info(ste.toString());
+    }
+
+    LOG.info("currentInputPath is "+currentInputPath);
+
     return currentInputPath;
   }
 
   public void setCurrentInputPath(Path currentInputPath) {
+    for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
+      LOG.info(ste.toString());
+    }
+
+    LOG.info("setCurrentInputPath is "+currentInputPath);
+
     this.currentInputPath = currentInputPath;
   }
 
@@ -148,4 +163,5 @@ public class ExecMapperContext {
   public IOContext getIoCxt() {
     return ioCxt;
   }
+
 }
