@@ -121,7 +121,8 @@ public class SparkPlanGenerator {
           SparkTran mapInput = null;
           if (work instanceof MapWork && work.getAllOperators().size() == 1) {
             //MapInput
-            tran = generateMapInput(sparkPlan, (MapWork) work,isCachingWork(work,sparkWork));
+           // tran = generateMapInput(sparkPlan, (MapWork) work,isCachingWork(work,sparkWork));
+            tran = generateMapInput(sparkPlan, (MapWork) work,true);
             sparkPlan.addTran(tran);
           } else if (work instanceof MapWork && work.getAllOperators().size() > 1) {
             ((MapWork) work).setSkipInitializeFileInputFormat(true);
@@ -229,7 +230,7 @@ public class SparkPlanGenerator {
     }
 
     // Caching is disabled for MapInput due to HIVE-8920
-   // MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
+    //MapInput result = new MapInput(sparkPlan, hadoopRDD, false/*cloneToWork.containsKey(mapWork)*/);
     MapInput result = new MapInput(sparkPlan, hadoopRDD, cached);
     return result;
   }
