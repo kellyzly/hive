@@ -191,13 +191,8 @@
     <stax.version>1.0.1</stax.version>
     <slf4j.version>1.7.10</slf4j.version>
     <ST4.version>4.0.4</ST4.version>
-<<<<<<< HEAD
-    <storage-api.version>3.0.0-SNAPSHOT</storage-api.version>
-    <tez.version>0.9.0</tez.version>
-=======
     <storage-api.version>3.0.0-9-SNAPSHOT</storage-api.version>
     <tez.version>0.9.1-SNAPSHOT</tez.version>
->>>>>>> 14f0430... HIVE-15016.7 with jdk9
     <slider.version>0.92.0-incubating</slider.version>
     <super-csv.version>2.2.0</super-csv.version>
     <spark.version>2.3.0-SNAPSHOT</spark.version>
