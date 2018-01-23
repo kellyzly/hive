@@ -139,7 +139,7 @@ public class SparkPlanGenerator {
 
     SparkTran result;
     if (work instanceof MapWork) {
-      result = generateMapInput(sparkPlan, (MapWork)work, isCachingWork(work, sparkWork));
+      result = generateMapInput(sparkPlan, (MapWork)work, isCachingWork(work, sparkWork),sparkWork);
       sparkPlan.addTran(result);
     } else if (work instanceof ReduceWork) {
       List<BaseWork> parentWorks = sparkWork.getParents(work);
@@ -188,34 +188,47 @@ public class SparkPlanGenerator {
   }
 
   @SuppressWarnings("unchecked")
-  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached)
+  private MapInput generateMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached, SparkWork sparkWork)
     throws Exception {
     LOG.info("MapWork :" + mapWork.getName() + " cached:" + cached);
+    Map<TableScanOperator,TableScanOperator> sharedTableMap = new HashMap<TableScanOperator, TableScanOperator>();
+    sharedTableMap = sparkWork.getSharedTableMap();
+    print(sparkWork.getSharedTableMap());
     JobConf jobConf = cloneJobConf(mapWork);
     MapInput mapInput = null;
     if (jobConf.getBoolean(HiveConf.ConfVars.PLAN.HIVE_SPARK_SHARED_WORK_OPTIMIZATION.varname, false) == false) {
-      mapInput = createMapInput(sparkPlan, mapWork, false);
+      mapInput = createMapInput(jobConf, sparkPlan, mapWork, false);
     } else {
       Operator operator = mapWork.getAllRootOperators().iterator().next();
       TableScanOperator ts = (TableScanOperator) operator;
-      if (!SharedTable.getInstance().getSharedTables().containsKey(ts)) {
-        boolean needCache = needCache(ts);
-
-        mapInput = createMapInput(sparkPlan, mapWork, needCache);
-        if (needCache) {
+      if (!sharedTableMap.containsKey(ts)) {
+        boolean needCache = needCache(ts,sharedTableMap);
+       mapInput = createMapInput(jobConf, sparkPlan, mapWork, needCache);
+         if (needCache) {
           tsMapInputMap.put(ts, mapInput);
         }
       } else {
-        TableScanOperator retainedTs = SharedTable.getInstance().getSharedTables().get(ts);
+        TableScanOperator retainedTs = sparkWork.getSharedTableMap().get(ts);
+
         if (tsMapInputMap.containsKey(retainedTs)) {
           mapInput = tsMapInputMap.get(retainedTs);
+        }else{
+          //There is few possiblity to go here
+          LOG.info("We can not get the  mapInput of retainedTs");
+          mapInput = createMapInput(jobConf, sparkPlan, mapWork, false);
         }
       }
     }
     return mapInput;
   }
 
-  private MapInput createMapInput(SparkPlan sparkPlan, MapWork mapWork, boolean cached)   throws Exception {
+  private void print(Map<TableScanOperator, TableScanOperator> sharedTableMap) {
+    for(TableScanOperator key: sharedTableMap.keySet()){
+      LOG.info("key:"+key.getOperatorId()+ " value:"+ sharedTableMap.get(key).getOperatorId());
+    }
+  }
+
+  private MapInput createMapInput(JobConf jobConf, SparkPlan sparkPlan, MapWork mapWork, boolean cached)   throws Exception {
     Class ifClass = getInputFormat(jobConf, mapWork);
 
     JavaPairRDD<WritableComparable, Writable> hadoopRDD;
@@ -233,8 +246,7 @@ public class SparkPlanGenerator {
     return result;
   }
 
-  private boolean needCache(TableScanOperator ts) {
-    Map<TableScanOperator,TableScanOperator> sharedTables = SharedTable.getInstance().getSharedTables();
+  private boolean needCache(TableScanOperator ts,Map<TableScanOperator,TableScanOperator> sharedTables){
     for(TableScanOperator key: sharedTables.keySet()){
       if( sharedTables.get(key).getOperatorId().equals(ts.getOperatorId())){
           return true;

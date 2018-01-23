@@ -22,6 +22,9 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.io.IOContextMap;
+import org.apache.hadoop.io.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
@@ -129,7 +132,13 @@ public class SparkMapRecordHandler extends SparkRecordHandler {
     }
     // reset the execContext for each new row
     execContext.resetRow();
-
+    if(jc.get("hive.spark.optimize.shared.work").equals("true")){
+     Path inputPath= IOContextMap.get(jc).getInputPath();
+      if( inputPath == null){
+         Text pathText = (Text)key;
+         IOContextMap.get(jc).setInputPath(new Path(pathText.toString()));
+      }
+    }
     try {
       // Since there is no concept of a group, we don't invoke
       // startGroup/endGroup for a mapper

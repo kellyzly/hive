@@ -140,29 +140,31 @@ public class SparkSharedWorkOptimizer  extends Transform {
           // - we cannot exceed the noconditional task size, and
           // - if we already merged the big table, we cannot merge the broadcast
           // tables.
-          if (!SharedWorkOptimizer.validPreConditions(pctx, optimizerCache, sr)) {
-            // Skip
-            LOG.debug("{} and {} do not meet preconditions", retainableTsOp, discardableTsOp);
-            continue;
-          }
+//          if (!SharedWorkOptimizer.validPreConditions(pctx, optimizerCache, sr)) {
+//            // Skip
+//            LOG.debug("{} and {} do not meet preconditions", retainableTsOp, discardableTsOp);
+//            continue;
+//          }
 
           // We can merge
           if (sr.retainableOps.size() > 1) {
-            //TODO find the suitable case for this branch
-            // More than TS operator
-            Operator<?> lastRetainableOp = sr.retainableOps.get(sr.retainableOps.size() - 1);
-            Operator<?> lastDiscardableOp = sr.discardableOps.get(sr.discardableOps.size() - 1);
-            if (lastDiscardableOp.getNumChild() != 0) {
-              List<Operator<? extends OperatorDesc>> allChildren =
-                  Lists.newArrayList(lastDiscardableOp.getChildOperators());
-              for (Operator<? extends OperatorDesc> op : allChildren) {
-                lastDiscardableOp.getChildOperators().remove(op);
-                op.replaceParent(lastDiscardableOp, lastRetainableOp);
-                lastRetainableOp.getChildOperators().add(op);
-              }
-            }
+            //For hive on tez, this feature may will merge two branches if more than 1 operator(TS) are same in the two
+            //branches. but for hive on spark, currently this is no need( not support).
 
-            LOG.debug("Merging subtree starting at {} into subtree starting at {}", discardableTsOp, retainableTsOp);
+//            // More than TS operator
+//            Operator<?> lastRetainableOp = sr.retainableOps.get(sr.retainableOps.size() - 1);
+//            Operator<?> lastDiscardableOp = sr.discardableOps.get(sr.discardableOps.size() - 1);
+//            if (lastDiscardableOp.getNumChild() != 0) {
+//              List<Operator<? extends OperatorDesc>> allChildren =
+//                  Lists.newArrayList(lastDiscardableOp.getChildOperators());
+//              for (Operator<? extends OperatorDesc> op : allChildren) {
+//                lastDiscardableOp.getChildOperators().remove(op);
+//                op.replaceParent(lastDiscardableOp, lastRetainableOp);
+//                lastRetainableOp.getChildOperators().add(op);
+//              }
+//            }
+
+//            LOG.debug("Merging subtree starting at {} into subtree starting at {}", discardableTsOp, retainableTsOp);
           } else {
             // Only TS operator
             ExprNodeGenericFuncDesc exprNode = null;
@@ -201,13 +203,15 @@ public class SparkSharedWorkOptimizer  extends Transform {
               }
             }
             // Replace filter
+            //TODO: understand why filters are not combined when there is more than 1 operator(TS) are same
+            //in the two branch
             retainableTsOp.getConf().setFilterExpr(exprNode);
-            LOG.info("SharedTable.getInstance().addSharedTable< "+discardableTsOp.getOperatorId()+ " ,"+retainableTsOp.getOperatorId()+" >");
-            SharedTable.getInstance().addSharedTable(discardableTsOp,retainableTsOp);
             replaceFilterTSMap.put(discardableTsOp, retainableTsOp);
             LOG.debug("Merging {} into {}", discardableTsOp, retainableTsOp);
           }
 
+          LOG.info("SharedTable.getInstance().addSharedTable< "+discardableTsOp.getOperatorId()+ " ,"+retainableTsOp.getOperatorId()+" >");
+          SharedTable.getInstance().addSharedTable(discardableTsOp,retainableTsOp);
           // First we remove the input operators of the expression that
           // we are going to eliminate
           for (Operator<?> op : sr.discardableInputOps) {

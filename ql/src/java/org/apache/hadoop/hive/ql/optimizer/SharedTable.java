@@ -21,11 +21,13 @@ package org.apache.hadoop.hive.ql.optimizer;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 
 import java.util.HashMap;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 /**
  * Store TS relationship, used in SparkSharedWorkOptimizer
  */
 public class SharedTable {
+  private static final Logger LOG = LoggerFactory.getLogger(SharedTable.class);
   private static SharedTable instance = null;
   private HashMap<TableScanOperator, TableScanOperator> sharedTables = new HashMap<>();
 
@@ -45,4 +47,10 @@ public class SharedTable {
   }
 
 
+  public void print() {
+
+    for(TableScanOperator key: sharedTables.keySet()){
+      LOG.info("key:"+key.getOperatorId()+ " value:"+ sharedTables.get(key).getOperatorId());
+    }
+  }
 }

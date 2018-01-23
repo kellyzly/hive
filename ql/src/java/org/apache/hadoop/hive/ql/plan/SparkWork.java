@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.plan.Explain.Vectorization;
 import org.apache.hadoop.hive.ql.plan.Explain.Level;
 
@@ -66,6 +67,8 @@ public class SparkWork extends AbstractOperatorDesc {
   private Map<String, List<String>> requiredCounterPrefix;
 
   private Map<BaseWork, BaseWork> cloneToWork;
+
+  private Map<TableScanOperator,TableScanOperator> sharedTableMap;
 
   public SparkWork(String queryId) {
     this.queryId = queryId;
@@ -433,5 +436,13 @@ public class SparkWork extends AbstractOperatorDesc {
 
   public void setCloneToWork(Map<BaseWork, BaseWork> cloneToWork) {
     this.cloneToWork = cloneToWork;
+  }
+
+  public Map<TableScanOperator, TableScanOperator> getSharedTableMap() {
+    return sharedTableMap;
+  }
+
+  public void setSharedTableMap(Map<TableScanOperator, TableScanOperator> sharedTableMap) {
+    this.sharedTableMap = sharedTableMap;
   }
 }
