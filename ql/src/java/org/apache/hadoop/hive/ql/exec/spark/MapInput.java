@@ -77,27 +77,40 @@ public class MapInput implements SparkTran<WritableComparable, Writable,
     WritableComparable, Writable> {
 
     private transient Configuration conf;
+    private String  lastInputPath;
+    private String inputPath;
+    private Text inputPathText;
+
 
     @Override
     public Tuple2<WritableComparable, Writable>
     call(Tuple2<WritableComparable, Writable> tuple) throws Exception {
       if (conf == null) {
         conf = new Configuration();
-        conf.set("hive.execution.engine","spark");
+        conf.set("hive.execution.engine", "spark");
+      }else{
+        LOG.info("conf is not null");
       }
-      // In theory,
-      //                CopyFunction       MapFunction
+      getInputPath();
+      return new Tuple2<WritableComparable, Writable>(inputPathText,
+        WritableUtils.clone(tuple._2(), conf));
+    }
+
+    private void getInputPath() {
+      //               CopyFunction       MapFunction
       //  HADOOPRDD-----------------> RDD1-------------> RDD2.....
       // these transformation are in one stage and will be executed by 1 spark task(thread),
       // IOContext.get(conf).getInputPath will not be null.
-      // if( IOContextMap.get(conf).getInputPath()!= null) {
-      String inputPath = IOContextMap.get(conf).getInputPath().toString();
-      Text inputPathText = new Text(inputPath);
-      return new Tuple2<WritableComparable, Writable>(inputPathText,
-        WritableUtils.clone(tuple._2(), conf));
-      //}
+      inputPath = IOContextMap.get(conf).getInputPath().toString();
+      if (lastInputPath == null) {
+        lastInputPath = inputPath;
+        inputPathText = new Text(inputPath);
+      }
+      if (!inputPath.equals(lastInputPath)) {
+        inputPathText = new Text(inputPath);
+        lastInputPath = inputPath;
+      }
     }
-
   }
 
   @Override
