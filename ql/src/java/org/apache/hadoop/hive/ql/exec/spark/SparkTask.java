@@ -30,6 +30,7 @@ import java.util.Map;
 import com.google.common.base.Throwables;
 import org.apache.hadoop.hive.common.metrics.common.Metrics;
 import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
+import org.apache.hadoop.hive.ql.optimizer.SharedTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -110,7 +111,7 @@ public class SparkTask extends Task<SparkWork> {
 
       SparkWork sparkWork = getWork();
       sparkWork.setRequiredCounterPrefix(getOperatorCounters());
-
+      sparkWork.setSharedTableMap(SharedTable.getInstance().getSharedTables());
       perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_SUBMIT_JOB);
       submitTime = perfLogger.getStartTime(PerfLogger.SPARK_SUBMIT_JOB);
       jobRef = sparkSession.submit(driverContext, sparkWork);
