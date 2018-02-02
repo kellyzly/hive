@@ -19,6 +19,11 @@
 package org.apache.hadoop.hive.ql.io;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.WritableComparable;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
 /**
  * IOContext basically contains the position information of the current
@@ -28,7 +33,7 @@ import org.apache.hadoop.fs.Path;
  * currentBlockStart refers to the beginning offset of the current row,
  * nextBlockStart refers the end of current row and beginning of next row.
  */
-public class IOContext {
+public class IOContext implements WritableComparable {
   private long currentBlockStart;
   private long nextBlockStart;
   private long currentRow;
@@ -50,6 +55,43 @@ public class IOContext {
    */
   private  RecordIdentifier ri;
 
+  @Override
+  public void write(DataOutput dataOutput) throws IOException {
+    dataOutput.writeLong(currentBlockStart);
+    dataOutput.writeLong(currentRow);
+    dataOutput.writeBoolean(ioExceptions);
+    dataOutput.writeBoolean(useSorted);
+    dataOutput.writeBoolean(isBinarySearching);
+    dataOutput.writeBoolean(endBinarySearch);
+    dataOutput.writeUTF(genericUDFClassName);
+    dataOutput.writeUTF(inputPath.toString());
+    if( ri!= null){
+      ri.write(dataOutput);
+    }
+    dataOutput.writeUTF(comparison.name());
+  }
+
+  @Override
+  public void readFields(DataInput dataInput) throws IOException {
+    currentBlockStart = dataInput.readLong();
+    currentRow = dataInput.readLong();
+    ioExceptions = dataInput.readBoolean();
+    useSorted = dataInput.readBoolean();
+    isBinarySearching = dataInput.readBoolean();
+    endBinarySearch = dataInput.readBoolean();
+    genericUDFClassName = dataInput.readUTF();
+    inputPath = new Path(dataInput.readUTF());
+    if (ri != null) {
+      ri.readFields(dataInput);
+    }
+    comparison = Comparison.valueOf(dataInput.readUTF());
+  }
+
+  @Override
+  public int compareTo(Object o) {
+    return 0;
+  }
+
   public static enum Comparison {
     GREATER,
     LESS,
@@ -65,6 +107,19 @@ public class IOContext {
     this.currentRow = 0;
     this.isBlockPointer = true;
     this.ioExceptions = false;
+  }
+
+  public void initialize(IOContext another) {
+    this.setCurrentBlockStart(another.getCurrentBlockStart());
+    this.setCurrentRow(another.getCurrentRow());
+    this.setIOExceptions(another.getIOExceptions());
+    this.setUseSorted(another.useSorted);
+    this.setBinarySearching(another.isBinarySearching);
+    this.setEndBinarySearch(another.endBinarySearch);
+    this.setGenericUDFClassName(another.genericUDFClassName);
+    this.setInputPath(another.getInputPath());
+    this.setRecordIdentifier(another.getRecordIdentifier());
+    this.comparison = another.comparison;
   }
 
   public long getCurrentBlockStart() {

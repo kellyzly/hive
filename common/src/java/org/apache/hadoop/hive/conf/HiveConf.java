@@ -1662,7 +1662,7 @@ public class HiveConf extends Configuration {
         "Probability with which a row will be chosen."),
     HIVE_REMOVE_ORDERBY_IN_SUBQUERY("hive.remove.orderby.in.subquery", true,
         "If set to true, order/sort by without limit in sub queries will be removed."),
-    HIVEOPTIMIZEDISTINCTREWRITE("hive.optimize.distinct.rewrite", true, "When applicable this "
+    HIVEOPTIMIZEDISTINCTREWRITE("hive.optimize.distinct.rSparkewrite", true, "When applicable this "
         + "optimization rewrites distinct aggregates from a single stage to multi-stage "
         + "aggregation. This may not be optimal in all cases. Ideally, whether to trigger it or "
         + "not should be cost based decision. Until Hive formalizes cost model for this, this is config driven."),
@@ -1715,6 +1715,9 @@ public class HiveConf extends Configuration {
     HIVE_SHARED_WORK_OPTIMIZATION("hive.optimize.shared.work", true,
         "Whether to enable shared work optimizer. The optimizer finds scan operator over the same table\n" +
         "and follow-up operators in the query plan and merges them if they meet some preconditions. Tez only."),
+    HIVE_SPARK_SHARED_WORK_OPTIMIZATION("hive.spark.optimize.shared.work", false,
+        "Whether to enable shared work optimizer. The optimizer finds scan operator over the same table\n" +
+        "and follow-up operators in the query plan and merges them if they meet some preconditions."),
     HIVE_SHARED_WORK_EXTENDED_OPTIMIZATION("hive.optimize.shared.work.extended", true,
         "Whether to enable shared work extended optimizer. The optimizer tries to merge equal operators\n" +
         "after a work boundary after shared work optimizer has been executed. Requires hive.optimize.shared.work\n" +

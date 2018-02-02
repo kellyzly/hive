@@ -115,4 +115,8 @@ public class IOContextMap {
     sparkThreadLocal.remove();
     globalMap.clear();
   }
+
+  public static void setIOContextForSpark(IOContext ioContext){
+    sparkThreadLocal.get().initialize(ioContext);
+  }
 }

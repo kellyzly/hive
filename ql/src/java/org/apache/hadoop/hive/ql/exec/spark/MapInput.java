@@ -19,6 +19,8 @@
 package org.apache.hadoop.hive.ql.exec.spark;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.ql.io.IOContext;
+import org.apache.hadoop.hive.ql.io.IOContextMap;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.io.WritableUtils;
@@ -29,7 +31,8 @@ import org.apache.spark.storage.StorageLevel;
 import scala.Tuple2;
 
 import com.google.common.base.Preconditions;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MapInput implements SparkTran<WritableComparable, Writable,
     WritableComparable, Writable> {
@@ -37,6 +40,7 @@ public class MapInput implements SparkTran<WritableComparable, Writable,
   private boolean toCache;
   private final SparkPlan sparkPlan;
   private String name = "MapInput";
+  private static final Logger LOG = LoggerFactory.getLogger(MapInput.class.getName());
 
   public MapInput(SparkPlan sparkPlan, JavaPairRDD<WritableComparable, Writable> hadoopRDD) {
     this(sparkPlan, hadoopRDD, false);
@@ -73,18 +77,46 @@ public class MapInput implements SparkTran<WritableComparable, Writable,
     WritableComparable, Writable> {
 
     private transient Configuration conf;
+    private String  lastInputPath;
+    private String inputPath;
+   // private IOContext iocontext;
+
 
     @Override
     public Tuple2<WritableComparable, Writable>
     call(Tuple2<WritableComparable, Writable> tuple) throws Exception {
       if (conf == null) {
         conf = new Configuration();
+        conf.set("hive.execution.engine", "spark");
       }
-
-      return new Tuple2<WritableComparable, Writable>(tuple._1(),
-          WritableUtils.clone(tuple._2(), conf));
+      IOContext ioContext =getChangeIOContext();
+      return new Tuple2<WritableComparable, Writable>(ioContext,
+        WritableUtils.clone(tuple._2(), conf));
     }
 
+    private IOContext getChangeIOContext() {
+      //               CopyFunction       MapFunction
+      //  HADOOPRDD-----------------> RDD1-------------> RDD2.....
+      // these transformation are in one stage and will be executed by 1 spark task(thread),
+      // IOContext.get(conf).getChangeIOContext will not be null.
+      IOContext ioContext = null;
+      inputPath = IOContextMap.get(conf).getInputPath().toString();
+      // first initialized, return current IOContext of current thread
+      if (lastInputPath == null) {
+        lastInputPath = inputPath;
+        ioContext = IOContextMap.get(conf);
+        return ioContext;
+      }
+      // lastInputPath is not equal to inputPath, it shows that the file boundary has changed
+      // return current IOContext of current thread
+      if (!inputPath.equals(lastInputPath)) {
+        ioContext = IOContextMap.get(conf);
+        lastInputPath = inputPath;
+        return ioContext;
+      }
+      // return null if lastInputPath is equal to inputPath
+      return null;
+    }
   }
 
   @Override
