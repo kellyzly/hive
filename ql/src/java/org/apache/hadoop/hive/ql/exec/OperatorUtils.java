@@ -371,7 +371,7 @@ public class OperatorUtils {
    * Remove the branch that contains the specified operator. Do nothing if there's no branching,
    * i.e. all the upstream operators have only one child.
    */
-  public static void removeBranch(SparkPartitionPruningSinkOperator op) {
+  public static void removeBranch(Operator<?> op) {
     Operator<?> child = op;
     Operator<?> curr = op;
 

@@ -102,6 +102,8 @@ public class MapWork extends BaseWork {
 
   private Path tmpPathForPartitionPruning;
 
+  private Path tmpPathForRuntimeFilter;
+
   private String inputformat;
 
   private String indexIntermediateFile;
@@ -141,6 +143,10 @@ public class MapWork extends BaseWork {
       new LinkedHashMap<String, List<String>>();
   private Map<String, List<ExprNodeDesc>> eventSourcePartKeyExprMap =
       new LinkedHashMap<String, List<ExprNodeDesc>>();
+
+  // used for runtime filter
+  private Map<String, List<TableDesc>> rfSourceTableDescMap =
+    new LinkedHashMap<>();
 
   private boolean doSplitsGrouping = true;
 
@@ -594,6 +600,14 @@ public class MapWork extends BaseWork {
     this.tmpPathForPartitionPruning = tmpPathForPartitionPruning;
   }
 
+  public Path getTmpPathForRuntimeFilter() {
+    return tmpPathForRuntimeFilter;
+  }
+
+  public void setTmpPathForRuntimeFilter(Path tmpPathForRuntimeFilter) {
+    this.tmpPathForRuntimeFilter = tmpPathForRuntimeFilter;
+  }
+
   public void mergingInto(MapWork mapWork) {
     // currently, this is sole field affecting mergee task
     mapWork.useBucketizedHiveInputFormat |= useBucketizedHiveInputFormat;
@@ -660,6 +674,14 @@ public class MapWork extends BaseWork {
 
   public void setEventSourceColumnNameMap(Map<String, List<String>> map) {
     this.eventSourceColumnNameMap = map;
+  }
+
+  public Map<String, List<TableDesc>> getRfSourceTableDescMap() {
+    return rfSourceTableDescMap;
+  }
+
+  public void setRfSourceTableDescMap(Map<String, List<TableDesc>> rfSourceTableDescMap) {
+    this.rfSourceTableDescMap = rfSourceTableDescMap;
   }
 
   public Map<String, List<String>> getEventSourceColumnNameMap() {
@@ -867,4 +889,5 @@ public class MapWork extends BaseWork {
     }
     return new MapExplainVectorization(this);
   }
+
 }

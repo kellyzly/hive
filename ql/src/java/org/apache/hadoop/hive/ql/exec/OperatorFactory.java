@@ -38,12 +38,15 @@ import org.apache.hadoop.hive.ql.exec.vector.VectorSMBMapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.vector.VectorSelectOperator;
 import org.apache.hadoop.hive.ql.exec.vector.VectorSparkHashTableSinkOperator;
 import org.apache.hadoop.hive.ql.exec.vector.VectorSparkPartitionPruningSinkOperator;
+import org.apache.hadoop.hive.ql.exec.vector.VectorSparkRuntimeFilterPruningSinkOperator;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizationContext;
 import org.apache.hadoop.hive.ql.exec.vector.reducesink.VectorReduceSinkCommonOperator;
 import org.apache.hadoop.hive.ql.exec.vector.ptf.VectorPTFOperator;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
 import org.apache.hadoop.hive.ql.parse.spark.SparkPartitionPruningSinkOperator;
+import org.apache.hadoop.hive.ql.parse.spark.SparkRuntimeFilterPruningSinkOperator;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkRuntimeFilterPruningSinkDesc;
 import org.apache.hadoop.hive.ql.plan.AbstractOperatorDesc;
 import org.apache.hadoop.hive.ql.plan.AbstractVectorDesc;
 import org.apache.hadoop.hive.ql.plan.AppMasterEventDesc;
@@ -122,6 +125,7 @@ public final class OperatorFactory {
     opvec.put(AppMasterEventDesc.class, AppMasterEventOperator.class);
     opvec.put(DynamicPruningEventDesc.class, AppMasterEventOperator.class);
     opvec.put(SparkPartitionPruningSinkDesc.class, SparkPartitionPruningSinkOperator.class);
+    opvec.put(SparkRuntimeFilterPruningSinkDesc.class, SparkRuntimeFilterPruningSinkOperator.class);
     opvec.put(RCFileMergeDesc.class, RCFileMergeOperator.class);
     opvec.put(OrcFileMergeDesc.class, OrcFileMergeOperator.class);
     opvec.put(CommonMergeJoinDesc.class, CommonMergeJoinOperator.class);
@@ -133,6 +137,8 @@ public final class OperatorFactory {
     vectorOpvec.put(DynamicPruningEventDesc.class, VectorAppMasterEventOperator.class);
     vectorOpvec.put(
         SparkPartitionPruningSinkDesc.class, VectorSparkPartitionPruningSinkOperator.class);
+    vectorOpvec.put(
+      SparkRuntimeFilterPruningSinkDesc.class, VectorSparkRuntimeFilterPruningSinkOperator.class);
     vectorOpvec.put(SelectDesc.class, VectorSelectOperator.class);
     vectorOpvec.put(GroupByDesc.class, VectorGroupByOperator.class);
     vectorOpvec.put(MapJoinDesc.class, VectorMapJoinOperator.class);

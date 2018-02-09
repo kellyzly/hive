@@ -76,6 +76,9 @@ public class SyntheticJoinPredicate extends Transform {
     } else if ((queryEngine.equals("spark")
         && pctx.getConf().isSparkDPPAny())) {
       enabled = true;
+    }  else if ((queryEngine.equals("spark")
+      && pctx.getConf().getBoolVar(ConfVars.SPARK_DYNAMIC_RUNTIMEFILTER_PRUNING))){
+      enabled = true;
     }
 
     if (!enabled) {

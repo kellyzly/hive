@@ -3568,6 +3568,10 @@ public class HiveConf extends Configuration {
         "hive.spark.dynamic.partition.pruning", false,
         "When dynamic pruning is enabled, joins on partition keys will be processed by writing\n" +
             "to a temporary HDFS file, and read later for removing unnecessary partitions."),
+    SPARK_DYNAMIC_RUNTIMEFILTER_PRUNING(
+      "hive.spark.dynamic.runtimefilter.pruning", false,
+      "When dynamic runtime filter pruning is enabled, joins on not non-partition keys will be processed by writing\n" +
+        "to a temporary HDFS file, and read later for removing unnecessary non-partition keys."),
     SPARK_DYNAMIC_PARTITION_PRUNING_MAX_DATA_SIZE(
         "hive.spark.dynamic.partition.pruning.max.data.size", 100*1024*1024L,
         "Maximum total data size in dynamic pruning."),

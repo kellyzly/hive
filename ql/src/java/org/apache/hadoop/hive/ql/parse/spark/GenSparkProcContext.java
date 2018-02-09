@@ -37,6 +37,7 @@ import org.apache.hadoop.hive.ql.hooks.ReadEntity;
 import org.apache.hadoop.hive.ql.hooks.WriteEntity;
 import org.apache.hadoop.hive.ql.lib.NodeProcessorCtx;
 import org.apache.hadoop.hive.ql.parse.ParseContext;
+import org.apache.hadoop.hive.ql.parse.RuntimeValuesInfo;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.DependencyCollectionWork;
 import org.apache.hadoop.hive.ql.plan.FileSinkDesc;
@@ -148,6 +149,16 @@ public class GenSparkProcContext implements NodeProcessorCtx {
   // The set of TableScanOperators for pruning OP trees
   public final Set<Operator<?>> clonedPruningTableScanSet;
 
+  // The set of pruning sinks
+  public final Set<Operator<?>> runtimeFilterPruningSinkSet;
+
+  // The set of TableScanOperators for pruning OP trees
+  public final Set<Operator<?>> clonedRuntimeFilterPruningTableScanSet;
+
+  //the set of RunTimeInfo for runtimeFilterPrunning
+  public final Map<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo> clonedPruningSinkRuntimeValuesInfo;
+
+
 
   @SuppressWarnings("unchecked")
   public GenSparkProcContext(HiveConf conf,
@@ -189,5 +200,8 @@ public class GenSparkProcContext implements NodeProcessorCtx {
     this.fileSinkMap = new LinkedHashMap<FileSinkOperator, List<FileSinkOperator>>();
     this.pruningSinkSet = new LinkedHashSet<Operator<?>>();
     this.clonedPruningTableScanSet = new LinkedHashSet<Operator<?>>();
+    this.runtimeFilterPruningSinkSet = new LinkedHashSet<Operator<?>>();
+    this.clonedRuntimeFilterPruningTableScanSet = new LinkedHashSet<Operator<?>>();
+    this.clonedPruningSinkRuntimeValuesInfo = new HashMap<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo>();
   }
 }

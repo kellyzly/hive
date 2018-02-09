@@ -150,6 +150,7 @@ import org.apache.hadoop.hive.ql.plan.VectorizationCondition;
 import org.apache.hadoop.hive.ql.plan.VectorGroupByDesc.ProcessingMode;
 import org.apache.hadoop.hive.ql.plan.VectorSparkHashTableSinkDesc;
 import org.apache.hadoop.hive.ql.plan.VectorSparkPartitionPruningSinkDesc;
+import org.apache.hadoop.hive.ql.plan.VectorSparkRuntimeFilterPruningSinkDesc;
 import org.apache.hadoop.hive.ql.plan.VectorLimitDesc;
 import org.apache.hadoop.hive.ql.plan.VectorMapJoinInfo;
 import org.apache.hadoop.hive.ql.plan.VectorSMBJoinDesc;
@@ -159,6 +160,7 @@ import org.apache.hadoop.hive.ql.plan.ReduceWork;
 import org.apache.hadoop.hive.ql.plan.SMBJoinDesc;
 import org.apache.hadoop.hive.ql.plan.SparkHashTableSinkDesc;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkRuntimeFilterPruningSinkDesc;
 import org.apache.hadoop.hive.ql.plan.SparkWork;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
 import org.apache.hadoop.hive.ql.plan.TableScanDesc;
@@ -4648,6 +4650,16 @@ public class Vectorizer implements PhysicalPlanResolver {
             isNative = true;
           }
           break;
+        case SPARKRUNTIMEFILTERPRUNINGSINK:
+        {
+          SparkRuntimeFilterPruningSinkDesc sparkRuntimeFilterPruningSinkDesc = (SparkRuntimeFilterPruningSinkDesc) op.getConf();
+          VectorSparkRuntimeFilterPruningSinkDesc vectorSparkRuntimeFilterPruningSinkDesc = new VectorSparkRuntimeFilterPruningSinkDesc();
+          sparkRuntimeFilterPruningSinkDesc.setVectorDesc(vectorSparkRuntimeFilterPruningSinkDesc);
+          vectorOp = OperatorFactory.getVectorOperator(
+            op.getCompilationOpContext(), sparkRuntimeFilterPruningSinkDesc, vContext, vectorSparkRuntimeFilterPruningSinkDesc);
+            isNative = true;
+        }
+        break;
         default:
           setOperatorNotSupported(op);
           throw new VectorizerCannotVectorizeException();

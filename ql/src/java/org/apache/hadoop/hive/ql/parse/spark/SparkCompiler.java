@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
+import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -93,6 +94,8 @@ import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.MoveWork;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.SparkWork;
+import org.apache.hadoop.hive.ql.plan.FilterDesc;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkRuntimeFilterPruningSinkDesc;
 import org.apache.hadoop.hive.ql.session.SessionState;
 
 /**
@@ -126,13 +129,12 @@ public class SparkCompiler extends TaskCompiler {
     // Run Join releated optimizations
     runJoinOptimizations(procCtx);
 
+    // Remove cyclic dependencies for DPP and runtime filter
+    runCycleAnalysisForPartitionPruning(procCtx);
+
     if(conf.isSparkDPPAny()){
       // Remove DPP based on expected size of the output data
       runRemoveDynamicPruning(procCtx);
-
-      // Remove cyclic dependencies for DPP
-      runCycleAnalysisForPartitionPruning(procCtx);
-
       // Remove nested DPPs
       SparkUtilities.removeNestedDPP(procCtx);
     }
@@ -165,8 +167,12 @@ public class SparkCompiler extends TaskCompiler {
     ogw.startWalking(topNodes, null);
   }
 
-  private void runCycleAnalysisForPartitionPruning(OptimizeSparkProcContext procCtx) {
+  private void runCycleAnalysisForPartitionPruning(OptimizeSparkProcContext procCtx) throws SemanticException{
 
+    if (!conf.getBoolVar(HiveConf.ConfVars.SPARK_DYNAMIC_PARTITION_PRUNING) && !conf.getBoolVar(HiveConf.ConfVars
+      .SPARK_DYNAMIC_RUNTIMEFILTER_PRUNING)) {
+      return;
+    }
     boolean cycleFree = false;
     while (!cycleFree) {
       cycleFree = true;
@@ -189,27 +195,69 @@ public class SparkCompiler extends TaskCompiler {
     }
   }
 
-  private void removeDPPOperator(Set<Operator<?>> component, OptimizeSparkProcContext context) {
-    SparkPartitionPruningSinkOperator toRemove = null;
+  private void removeDPPOperator(Set<Operator<?>> component, OptimizeSparkProcContext context) throws SemanticException{
+    SparkPartitionPruningSinkOperator toRemovePP = null;
+    SparkRuntimeFilterPruningSinkOperator toRemoveRF = null;
+    TableScanOperator toRemoveTS = null;
     for (Operator<?> o : component) {
       if (o instanceof SparkPartitionPruningSinkOperator) {
         // we want to remove the DPP with bigger data size
-        if (toRemove == null
-            || o.getConf().getStatistics().getDataSize() > toRemove.getConf().getStatistics()
-            .getDataSize()) {
-          toRemove = (SparkPartitionPruningSinkOperator) o;
+        //TODO whether the if judge affect the DPP implementation ???
+        if (toRemovePP == null
+          || o.getConf().getStatistics().getDataSize() > toRemovePP.getConf().getStatistics()
+          .getDataSize()) {
+          toRemovePP = (SparkPartitionPruningSinkOperator) o;
+        }
+      } else if (o instanceof SparkRuntimeFilterPruningSinkOperator){
+        TableScanOperator ts = context.getParseContext().getRfOpToTsOpMap().get(o);
+
+        if (ts == null) {
+          continue;
+        }
+
+        if (toRemoveRF == null
+          || ts.getStatistics().getDataSize() <
+          toRemoveTS.getStatistics().getDataSize()) {
+          toRemoveRF = (SparkRuntimeFilterPruningSinkOperator) o;
+          toRemoveTS = ts;
         }
       }
+
+    }
+    Operator<?> toRemove = toRemoveRF;
+    if (toRemoveRF == null && toRemovePP != null) {
+      toRemove = toRemovePP;
+    } else if (toRemovePP == null){
+      // do nothing
+    } else {
+      // Cycle consists of atleast one dynamic partition pruning(DPP)
+      // optimization and atleast one min/max optimization.
+      // DPP is a better optimization unless it ends up scanning the
+      // bigger table for keys instead of the smaller table.
+
+      // Get the parent TS of victimRS.
+      // copy the TezCompiler code
+      /*Operator<?> op = victimRS;
+      while(!(op instanceof TableScanOperator)) {
+        op = op.getParentOperators().get(0);
+      }
+      if ((2 * op.getStatistics().getDataSize()) <
+        victimAM.getStatistics().getDataSize()) {
+        victim = victimAM;
+      }*/
     }
 
-    if (toRemove == null) {
+    if (toRemove == null ) {
       return;
     }
-
     OperatorUtils.removeBranch(toRemove);
-    // at this point we've found the fork in the op pipeline that has the pruning as a child plan.
+    if (toRemove == toRemoveRF) {
+      GenSparkUtils.removeSemiJoinOperator(context.getParseContext(), toRemoveRF, toRemoveTS);
+    }
+
+    /*// at this point we've found the fork in the op pipeline that has the pruning as a child plan.
     LOG.info("Disabling dynamic pruning for: "
-        + toRemove.getConf().getTableScan().toString() + ". Needed to break cyclic dependency");
+      + toRemove.getConf().getTableScan().toString() + ". Needed to break cyclic dependency");*/
   }
 
   // Tarjan's algo
@@ -244,7 +292,13 @@ public class SparkCompiler extends TaskCompiler {
       TableScanOperator ts = ((SparkPartitionPruningSinkDesc) o.getConf()).getTableScan();
       LOG.debug("Adding special edge: " + o.getName() + " --> " + ts.toString());
       children.add(ts);
-    } else {
+    } else if (o instanceof SparkRuntimeFilterPruningSinkOperator){
+      children = new ArrayList<>();
+      children.addAll(o.getChildOperators());
+      TableScanOperator ts = ((SparkRuntimeFilterPruningSinkDesc) o.getConf()).getTableScan();
+      LOG.debug("Adding special edge: " + o.getName() + " --> " + ts.toString());
+      children.add(ts);
+    }else {
       children = o.getChildOperators();
     }
 
@@ -275,7 +329,7 @@ public class SparkCompiler extends TaskCompiler {
 
   private void runDynamicPartitionPruning(OptimizeSparkProcContext procCtx)
       throws SemanticException {
-    if (!conf.isSparkDPPAny()) {
+    if (!conf.isSparkDPPAny() && !conf.getBoolVar(HiveConf.ConfVars.SPARK_DYNAMIC_RUNTIMEFILTER_PRUNING)) {
       return;
     }
 
@@ -356,6 +410,9 @@ public class SparkCompiler extends TaskCompiler {
     opRules.put(new RuleRegExp("Clone OP tree for PartitionPruningSink",
             SparkPartitionPruningSinkOperator.getOperatorName() + "%"),
         new SplitOpTreeForDPP());
+    opRules.put(new RuleRegExp("Clone OP tree for RuntimeFilterPruningSink",
+        SparkRuntimeFilterPruningSinkOperator.getOperatorName() + "%"),
+      new SplitOpTreeForRFP());
 
     Dispatcher disp = new DefaultRuleDispatcher(null, opRules, procCtx);
     GraphWalker ogw = new GenSparkWorkWalker(disp, procCtx);
@@ -389,6 +446,49 @@ public class SparkCompiler extends TaskCompiler {
       procCtx.currentTask = mainTask;
     }
 
+   topNodes.clear();
+    List<Node> tmpResult = new ArrayList<>();
+    for (Operator<?> ts : procCtx.clonedRuntimeFilterPruningTableScanSet){
+      FilterOperator fl = (FilterOperator) ts.getChildren().get(0);
+      if (!isContainDynamicValue(fl.getConf())){
+        topNodes.add(ts);
+      } else {
+        tmpResult.add(ts);
+      }
+    }
+   /* //remove the DynamicValue info of FIL in SparkRuntimeFilterPruningSinkOperator branch; we can also remove the Dynamicvalue info in SplitOpTreeForRFP#clonedPruningSinkOp#TS
+    for (Node ts: tmpResult) {
+      Iterator it = tempParseContext.getRfOpToTsOpMap().keySet().iterator();
+      while (it.hasNext()){
+        SparkRuntimeFilterPruningSinkOperator rf = (SparkRuntimeFilterPruningSinkOperator)it.next();
+        TableScanOperator tso = rf.getConf().getTableScan();
+
+        if (((TableScanOperator) ts).getOperatorId().equals(tso.getOperatorId())){
+          it.remove();
+          // here ts is the TS of SparkRuntimeFilterPruningSinkOperator branch not the ts of target work
+          GenSparkUtils.removeSemiJoinOperator(tempParseContext, rf, (TableScanOperator) ts);
+        }
+      }
+    }*/
+    for (Node ts : tmpResult){
+      topNodes.add(ts);
+    }
+
+    if (!topNodes.isEmpty()) {
+      SparkTask pruningTask = SparkUtilities.createSparkTask(conf);
+      SparkTask mainTask = procCtx.currentTask;
+      pruningTask.addDependentTask(procCtx.currentTask);
+      procCtx.rootTasks.remove(procCtx.currentTask);
+      procCtx.rootTasks.add(pruningTask);
+      procCtx.currentTask = pruningTask;
+
+      /*topNodes.clear();
+      topNodes.addAll(procCtx.clonedRuntimeFilterPruningTableScanSet);*/
+      generateTaskTreeHelper(procCtx, topNodes);
+      procCtx.currentTask = mainTask;
+    }
+
+
     // -------------------------------- Post Pass ---------------------------------- //
 
     // we need to clone some operator plans and remove union operators still
@@ -409,9 +509,23 @@ public class SparkCompiler extends TaskCompiler {
       utils.processPartitionPruningSink(procCtx, (SparkPartitionPruningSinkOperator) prunerSink);
     }
 
+    // Connect any edges required for min/max pushdown
+    for(Operator<?> rf : procCtx.runtimeFilterPruningSinkSet){
+      utils.processDynamicMinMaxPushDownOperator(procCtx, procCtx.clonedPruningSinkRuntimeValuesInfo.get(rf),
+        (SparkRuntimeFilterPruningSinkOperator) rf);
+    }
+
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_GENERATE_TASK_TREE);
   }
 
+  private boolean isContainDynamicValue(FilterDesc fd) {
+    String predicateString = fd.getPredicateString();
+    if (predicateString.contains("DynamicValue")){
+      return true;
+    } else {
+      return false;
+    }
+  }
   private void generateTaskTreeHelper(GenSparkProcContext procCtx, List<Node> topNodes)
     throws SemanticException {
     // create a walker which walks the tree in a DFS manner while maintaining
@@ -424,6 +538,9 @@ public class SparkCompiler extends TaskCompiler {
 
     opRules.put(new RuleRegExp("Split Work - SparkPartitionPruningSink",
         SparkPartitionPruningSinkOperator.getOperatorName() + "%"), genSparkWork);
+
+    opRules.put(new RuleRegExp("Split Work - SparkRuntimeFilterPruningSink",
+      SparkRuntimeFilterPruningSinkOperator.getOperatorName() + "%"), genSparkWork);
 
     opRules.put(new TypeRule(MapJoinOperator.class), new SparkReduceSinkMapJoinProc());
 

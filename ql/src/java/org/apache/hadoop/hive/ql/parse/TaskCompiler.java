@@ -632,6 +632,9 @@ public abstract class TaskCompiler {
     clone.setColExprToGBMap(pCtx.getColExprToGBMap());
     clone.setSemiJoinHints(pCtx.getSemiJoinHints());
 
+    clone.setRfOpToTsOpMap(pCtx.getRfOpToTsOpMap());
+    clone.setRfToRuntimeValuesInfo(pCtx.getRfToRuntimeValuesInfo());
+
     return clone;
   }
 

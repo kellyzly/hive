@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.Context;
@@ -50,6 +51,7 @@ import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.optimizer.ppr.PartitionPruner;
 import org.apache.hadoop.hive.ql.optimizer.unionproc.UnionProcContext;
 import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.AnalyzeRewriteContext;
+import org.apache.hadoop.hive.ql.parse.spark.SparkRuntimeFilterPruningSinkOperator;
 import org.apache.hadoop.hive.ql.plan.CreateTableDesc;
 import org.apache.hadoop.hive.ql.plan.CreateViewDesc;
 import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
@@ -134,6 +136,11 @@ public class ParseContext {
 
   private Map<String, List<SemiJoinHint>> semiJoinHints;
   private boolean disableMapJoin;
+
+  private Map<SparkRuntimeFilterPruningSinkOperator, TableScanOperator> rfOpToTsOpMap =
+    new HashMap<>();
+  private Map<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo> rfToRuntimeValuesInfo =
+    new HashMap<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo>();
 
   public ParseContext() {
   }
@@ -706,5 +713,22 @@ public class ParseContext {
 
   public boolean getDisableMapJoin() {
     return disableMapJoin;
+  }
+
+  public Map<SparkRuntimeFilterPruningSinkOperator, TableScanOperator> getRfOpToTsOpMap() {
+    return rfOpToTsOpMap;
+  }
+
+  public void setRfOpToTsOpMap(Map<SparkRuntimeFilterPruningSinkOperator, TableScanOperator> rfOpToTsOpMap) {
+    this.rfOpToTsOpMap = rfOpToTsOpMap;
+  }
+
+  public Map<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo> getRfToRuntimeValuesInfo() {
+    return rfToRuntimeValuesInfo;
+  }
+
+  public void setRfToRuntimeValuesInfo(Map<SparkRuntimeFilterPruningSinkOperator, RuntimeValuesInfo>
+                                         rfToRuntimeValuesInfo) {
+    this.rfToRuntimeValuesInfo = rfToRuntimeValuesInfo;
   }
 }

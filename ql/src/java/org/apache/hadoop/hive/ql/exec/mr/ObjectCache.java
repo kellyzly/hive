@@ -18,12 +18,16 @@
 
 package org.apache.hadoop.hive.ql.exec.mr;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.apache.hadoop.hive.ql.exec.DynamicValueRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -36,6 +40,7 @@ import org.apache.hadoop.hive.ql.metadata.HiveException;
 public class ObjectCache implements org.apache.hadoop.hive.ql.exec.ObjectCache {
 
   private static final Logger LOG = LoggerFactory.getLogger(ObjectCache.class.getName());
+  public static Map<String, DynamicValueRegistry> dynamicValueRegistryMap = Collections.synchronizedMap(new HashMap<String, DynamicValueRegistry>());
 
   @Override
   public void release(String key) {
@@ -47,7 +52,11 @@ public class ObjectCache implements org.apache.hadoop.hive.ql.exec.ObjectCache {
 
   @Override
   public <T> T retrieve(String key) throws HiveException {
-    return retrieve(key, null);
+    if (dynamicValueRegistryMap.size() != 0){
+      return (T)dynamicValueRegistryMap.get(key);
+    } else{
+      return null;
+    }
   }
 
   @Override

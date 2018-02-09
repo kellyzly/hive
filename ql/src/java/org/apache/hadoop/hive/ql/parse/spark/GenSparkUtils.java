@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
+import java.util.LinkedHashMap;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -39,6 +40,7 @@ import org.apache.hadoop.hive.ql.exec.FetchTask;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator;
 import org.apache.hadoop.hive.ql.exec.ForwardOperator;
 import org.apache.hadoop.hive.ql.exec.GroupByOperator;
+import org.apache.hadoop.hive.ql.exec.FilterOperator;
 import org.apache.hadoop.hive.ql.exec.HashTableDummyOperator;
 import org.apache.hadoop.hive.ql.exec.JoinOperator;
 import org.apache.hadoop.hive.ql.exec.Operator;
@@ -49,11 +51,14 @@ import org.apache.hadoop.hive.ql.exec.SerializationUtilities;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.exec.UnionOperator;
+import org.apache.hadoop.hive.ql.exec.spark.SparkUtilities;
 import org.apache.hadoop.hive.ql.optimizer.GenMapRedUtils;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkPartitionPruningSinkDesc;
+import org.apache.hadoop.hive.ql.optimizer.spark.SparkRuntimeFilterPruningSinkDesc;
 import org.apache.hadoop.hive.ql.optimizer.spark.SparkSortMergeJoinFactory;
 import org.apache.hadoop.hive.ql.parse.ParseContext;
 import org.apache.hadoop.hive.ql.parse.PrunedPartitionList;
+import org.apache.hadoop.hive.ql.parse.RuntimeValuesInfo;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
@@ -65,11 +70,29 @@ import org.apache.hadoop.hive.ql.plan.ReduceWork;
 import org.apache.hadoop.hive.ql.plan.SparkEdgeProperty;
 import org.apache.hadoop.hive.ql.plan.SparkWork;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
+import org.apache.hadoop.hive.ql.plan.FilterDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeDynamicValueDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
+import org.apache.hadoop.hive.ql.lib.NodeProcessorCtx;
+import org.apache.hadoop.hive.ql.lib.NodeProcessor;
+import org.apache.hadoop.hive.ql.lib.Node;
+import org.apache.hadoop.hive.ql.lib.Rule;
+import org.apache.hadoop.hive.ql.lib.RuleRegExp;
+import org.apache.hadoop.hive.ql.lib.Dispatcher;
+import org.apache.hadoop.hive.ql.lib.DefaultRuleDispatcher;
+import org.apache.hadoop.hive.ql.lib.GraphWalker;
+import org.apache.hadoop.hive.ql.lib.DefaultGraphWalker;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDFBetween;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDFInBloomFilter;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+
 
 /**
  * GenSparkUtils is a collection of shared helper methods to produce SparkWork
@@ -680,5 +703,158 @@ public class GenSparkUtils {
       }
     }
     return false;
+  }
+
+  public void processDynamicMinMaxPushDownOperator(GenSparkProcContext procCtx, RuntimeValuesInfo runtimeValuesInfo,
+                                                   SparkRuntimeFilterPruningSinkOperator rf) throws SemanticException {
+
+    SparkRuntimeFilterPruningSinkDesc desc = rf.getConf();
+    TableScanOperator ts = desc.getTableScan();
+    MapWork targetWork = (MapWork) procCtx.rootToWorkMap.get(ts);
+    desc.setTargetMapWork(targetWork);
+
+    Preconditions.checkArgument(
+      targetWork != null,
+      "No targetWork found for tablescan " + ts);
+    String targetId = SparkUtilities.getWorkId(targetWork);
+
+    BaseWork sourceWork = getEnclosingWork(rf, procCtx);
+    String sourceId = SparkUtilities.getWorkId(sourceWork);
+
+    // set up temporary path to communicate between the small/big table
+    Path tmpPath = targetWork.getTmpPathForRuntimeFilter();
+    if (tmpPath == null) {
+      Path baseTmpPath = procCtx.parseContext.getContext().getMRTmpPath();
+      tmpPath = SparkUtilities.generateTmpPathForPartitionPruning(baseTmpPath, targetId);
+      targetWork.setTmpPathForRuntimeFilter(tmpPath);
+      LOG.info("Setting tmp path between source work and target work:\n" + tmpPath);
+    }
+
+    desc.setPath(new Path(tmpPath, sourceId));
+    desc.setTargetWork(targetWork.getName());
+
+    // store table descriptor in map-targetWork
+    if (!targetWork.getRfSourceTableDescMap().containsKey(sourceId)) {
+      targetWork.getRfSourceTableDescMap().put(sourceId, new LinkedList<TableDesc>());
+    }
+    List<TableDesc> tables = targetWork.getRfSourceTableDescMap().get(sourceId);
+    tables.add(rf.getConf().getTable());
+
+    BaseWork childWork = procCtx.rootToWorkMap.get(ts);
+
+
+    // Set up the dynamic values in the childWork.
+    RuntimeValuesInfo childRuntimeValuesInfo =
+      new RuntimeValuesInfo();
+    childRuntimeValuesInfo.setTableDesc(runtimeValuesInfo.getTableDesc());
+    childRuntimeValuesInfo.setDynamicValueIDs(runtimeValuesInfo.getDynamicValueIDs());
+    childRuntimeValuesInfo.setColExprs(runtimeValuesInfo.getColExprs());
+    childWork.setInputSourceToRuntimeValuesInfo(
+      sourceWork.getName(), childRuntimeValuesInfo);
+  }
+
+  // Functionality to remove semi-join optimization
+  public static void removeSemiJoinOperator(ParseContext context,
+                                            SparkRuntimeFilterPruningSinkOperator rf,
+                                            TableScanOperator ts) throws SemanticException{
+    // Cleanup the synthetic predicate in the tablescan operator by
+    // replacing it with "true"
+    LOG.debug("Removing SparkRuntimeFilterPruningSinkOperator " + rf + " and TableScan " + ts);
+    ExprNodeDesc constNode = new ExprNodeConstantDesc(
+      TypeInfoFactory.booleanTypeInfo, Boolean.TRUE);
+    DynamicValuePredicateContext filterDynamicValuePredicatesCollection =
+      new DynamicValuePredicateContext();
+    FilterDesc filterDesc = ((FilterOperator)(ts.getChildOperators().get(0))).getConf();
+    collectDynamicValuePredicates(filterDesc.getPredicate(),
+      filterDynamicValuePredicatesCollection);
+    for (ExprNodeDesc nodeToRemove : filterDynamicValuePredicatesCollection
+      .childParentMapping.keySet()) {
+      // Find out if this synthetic predicate belongs to the current cycle
+      boolean skip = true;
+      for (ExprNodeDesc expr : nodeToRemove.getChildren()) {
+        if (expr instanceof ExprNodeDynamicValueDesc ) {
+          String dynamicValueIdFromExpr = ((ExprNodeDynamicValueDesc) expr)
+            .getDynamicValue().getId();
+          List<String> dynamicValueIdsFromMap = context.
+            getRfToRuntimeValuesInfo().get(rf).getDynamicValueIDs();
+          for (String dynamicValueIdFromMap : dynamicValueIdsFromMap) {
+            if (dynamicValueIdFromExpr.equals(dynamicValueIdFromMap)) {
+              // Intended predicate to be removed
+              skip = false;
+              break;
+            }
+          }
+        }
+      }
+      if (!skip) {
+        ExprNodeDesc nodeParent = filterDynamicValuePredicatesCollection
+          .childParentMapping.get(nodeToRemove);
+        if (nodeParent == null) {
+          // This was the only predicate, set filter expression to const
+          filterDesc.setPredicate(constNode);
+        } else {
+          int i = nodeParent.getChildren().indexOf(nodeToRemove);
+          nodeParent.getChildren().remove(i);
+          nodeParent.getChildren().add(i, constNode);
+        }
+        // skip the rest of the predicates
+        skip = true;
+      }
+    }
+    context.getRfOpToTsOpMap().remove(rf);
+  }
+
+  private static class DynamicValuePredicateContext implements NodeProcessorCtx {
+    HashMap<ExprNodeDesc, ExprNodeDesc> childParentMapping = new HashMap<ExprNodeDesc, ExprNodeDesc>();
+  }
+
+  private static class DynamicValuePredicateProc implements NodeProcessor {
+
+    @Override
+    public Object process(Node nd, Stack<Node> stack, NodeProcessorCtx procCtx,
+                          Object... nodeOutputs) throws SemanticException {
+      GenSparkUtils.DynamicValuePredicateContext ctx = (GenSparkUtils.DynamicValuePredicateContext) procCtx;
+      ExprNodeDesc parent = (ExprNodeDesc) stack.get(stack.size() - 2);
+      if (parent instanceof ExprNodeGenericFuncDesc) {
+        ExprNodeGenericFuncDesc parentFunc = (ExprNodeGenericFuncDesc) parent;
+        if (parentFunc.getGenericUDF() instanceof GenericUDFBetween ||
+          parentFunc.getGenericUDF() instanceof GenericUDFInBloomFilter) {
+          ExprNodeDesc grandParent = stack.size() >= 3 ?
+            (ExprNodeDesc) stack.get(stack.size() - 3) : null;
+          ctx.childParentMapping.put(parentFunc, grandParent);
+        }
+      }
+
+      return null;
+    }
+  }
+
+
+  private static void collectDynamicValuePredicates(ExprNodeDesc pred, NodeProcessorCtx ctx) throws SemanticException {
+    // create a walker which walks the tree in a DFS manner while maintaining
+    // the operator stack. The dispatcher
+    // generates the plan from the operator tree
+    Map<Rule, NodeProcessor> exprRules = new LinkedHashMap<Rule, NodeProcessor>();
+    exprRules.put(new RuleRegExp("R1", ExprNodeDynamicValueDesc.class.getName() + "%"), new GenSparkUtils.DynamicValuePredicateProc());
+    Dispatcher disp = new DefaultRuleDispatcher(null, exprRules, ctx);
+    GraphWalker egw = new DefaultGraphWalker(disp);
+    List<Node> startNodes = new ArrayList<Node>();
+    startNodes.add(pred);
+
+    egw.startWalking(startNodes, null);
+  }
+  /**
+   * getEncosingWork finds the BaseWork any given operator belongs to.
+   */
+  public BaseWork getEnclosingWork(Operator<?> op, GenSparkProcContext procCtx) {
+    List<Operator<?>> ops = new ArrayList<Operator<?>>();
+    OperatorUtils.findRoots(op, ops);
+    for (Operator<?> r : ops) {
+      BaseWork work = procCtx.rootToWorkMap.get(r);
+      if (work != null) {
+        return work;
+      }
+    }
+    return null;
   }
 }
