@@ -22,8 +22,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.Stack;
 import java.util.Iterator;
@@ -515,6 +518,10 @@ public class SparkCompiler extends TaskCompiler {
         (SparkRuntimeFilterPruningSinkOperator) rf);
     }
 
+    LOG.info("Print Spark Task generateTaskTree");
+    PhysicalContext physicalCtx = new PhysicalContext(conf, procCtx.parseContext, procCtx.parseContext.getContext(), rootTasks, procCtx.parseContext.getFetchTask());
+    printSparkTask(physicalCtx);
+
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_GENERATE_TASK_TREE);
   }
 
@@ -613,6 +620,8 @@ public class SparkCompiler extends TaskCompiler {
     Dispatcher disp = new DefaultRuleDispatcher(null, opRules, procCtx);
     GraphWalker ogw = new GenSparkWorkWalker(disp, procCtx);
     ogw.startWalking(topNodes, null);
+
+
   }
 
   @Override
@@ -670,11 +679,14 @@ public class SparkCompiler extends TaskCompiler {
   protected void optimizeTaskPlan(List<Task<? extends Serializable>> rootTasks, ParseContext pCtx,
       Context ctx) throws SemanticException {
     PERF_LOGGER.PerfLogBegin(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_TASK_TREE);
+
     PhysicalContext physicalCtx = new PhysicalContext(conf, pCtx, pCtx.getContext(), rootTasks,
        pCtx.getFetchTask());
 
     physicalCtx = new SplitSparkWorkResolver().resolve(physicalCtx);
 
+    LOG.info("Before SparkMapJoinResolver:");
+    printSparkTask(physicalCtx);
     if (conf.getBoolVar(HiveConf.ConfVars.HIVESKEWJOIN)) {
       (new SparkSkewJoinResolver()).resolve(physicalCtx);
     } else {
@@ -731,4 +743,44 @@ public class SparkCompiler extends TaskCompiler {
     PERF_LOGGER.PerfLogEnd(CLASS_NAME, PerfLogger.SPARK_OPTIMIZE_TASK_TREE);
     return;
   }
+
+ private void printSparkTask(PhysicalContext pctx){
+   for (Task<? extends Serializable> task : pctx.getRootTasks()) {
+     if (task instanceof SparkTask) {
+       LOG.info("task name {}",task.getName());
+       printSparkWork(((SparkTask) task).getWork());
+     }
+     for(Task childTask: task.getChildTasks()){
+       LOG.info("task name {}",childTask.getName());
+       printSparkWork(((SparkTask)childTask).getWork());
+     }
+   }
+ }
+  private void printSparkWork(SparkWork sparkWork){
+    LinkedList<BaseWork> result = new LinkedList();
+    HashSet seen = new HashSet();
+    for(BaseWork leaf: sparkWork.getLeaves()) {
+      visit(leaf, seen,result,sparkWork);
+    }
+    for(BaseWork w: result){
+      LOG.info("work name:{}",w.getName());
+      LOG.info("work operator tree:{}",Operator.toString2(w.getAllRootOperators()));
+    }
+  }
+
+  private void visit(BaseWork child, Set<BaseWork> seen, List<BaseWork> result,SparkWork sparkWork) {
+    if (seen.contains(child)) {
+      // don't visit multiple times
+      return;
+    }
+    seen.add(child);
+
+    for (BaseWork parent: sparkWork.getParents(child)) {
+      if (!seen.contains(parent)) {
+        visit(parent, seen, result,sparkWork);
+      }
+    }
+    result.add(child);
+  }
+
 }

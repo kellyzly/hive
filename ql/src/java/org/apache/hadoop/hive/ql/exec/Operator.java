@@ -1390,7 +1390,17 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
     }
     return builder.toString();
   }
-
+  public static String toString2(Collection<Operator <? extends OperatorDesc>> top) {
+    StringBuilder builder = new StringBuilder();
+    Set<String> visited = new HashSet<String>();
+    for (Operator<?> op : top) {
+      if (builder.length() > 0) {
+        builder.append('\n');
+      }
+      toString(builder, visited, op, 0);
+    }
+    return builder.toString();
+  }
   static boolean toString(StringBuilder builder, Set<String> visited, Operator<?> op, int start) {
     String name = op.toString();
     boolean added = visited.add(name);
