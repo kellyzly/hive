@@ -21,6 +21,7 @@ package org.apache.hadoop.hive.ql.exec.spark;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +44,7 @@ public class SparkPlan {
   private final PerfLogger perfLogger = SessionState.getPerfLogger();
 
   private final Set<SparkTran> rootTrans = new HashSet<SparkTran>();
-  private final Set<SparkTran> leafTrans = new HashSet<SparkTran>();
+  private final Set<SparkTran> leafTrans = new LinkedHashSet<SparkTran>();
   private final Map<SparkTran, List<SparkTran>> transGraph = new HashMap<SparkTran, List<SparkTran>>();
   private final Map<SparkTran, List<SparkTran>> invertedTransGraph = new HashMap<SparkTran, List<SparkTran>>();
   private final Set<Integer> cachedRDDIds = new HashSet<Integer>();
